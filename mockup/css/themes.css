@@ -1,0 +1,192 @@
+/* Three skins, one state machine.  Each theme only changes variables. */
+
+#app.theme-authentic {
+  --page: #111112;
+  --page-glow: rgba(255, 201, 77, 0.07);
+  --page-glow-2: rgba(255, 201, 77, 0.025);
+  --text: #ded9c8;
+  --muted: #8a8270;
+  --panel: #191919;
+  --panel-2: #20201f;
+  --panel-edge: #34322c;
+  --shell: #292929;
+  --shell-2: #363534;
+  --shell-edge: #4b4841;
+  --shell-text: #ded9c8;
+  --shell-muted: #8d8677;
+  --key: #c8c0a6;
+  --key-2: #d8d0b8;
+  --key-text: #1c1a16;
+  --key-shadow: #6c6759;
+  --key-fn: #77705e;
+  --key-fn-2: #898170;
+  --key-fn-text: #f6eed7;
+  --ptt: #8c2c2c;
+  --ptt-2: #a93a3a;
+  --ptt-shadow: #4d1111;
+  --knob: #1b1b1b;
+  --knob-2: #30302f;
+  --knob-edge: #4b4841;
+  --accent: #ffc94d;
+  --accent-contrast: #14120d;
+  --accent-dim: rgba(255, 201, 77, 0.34);
+  --lcd-bg: #000;
+  --lcd-edge: #26241d;
+  --lcd-fg: #f3e5ae;
+  --lcd-dim: #8a7748;
+  --lcd-accent: #ffcf5a;
+  --lcd-rx: #f3e5ae;
+  --lcd-tx: #ff6b6b;
+  --lcd-glow: rgba(255, 220, 120, 0.13);
+  --lcd-sel: rgba(255, 207, 90, 0.12);
+  --scanline: 0.34;
+  --radio-radius: 9px;
+  --key-radius: 4px;
+  --panel-radius: 9px;
+  --bezel-radius: 4px;
+  --lcd-radius: 2px;
+}
+
+#app.theme-hybrid {
+  --page: #080a0c;
+  --page-glow: rgba(255, 176, 0, 0.085);
+  --page-glow-2: rgba(77, 225, 193, 0.055);
+  --text: #e7eef5;
+  --muted: #7c8b99;
+  --panel: #0e1217;
+  --panel-2: #151b22;
+  --panel-edge: #252d36;
+  --shell: #10151a;
+  --shell-2: #202830;
+  --shell-edge: #303a44;
+  --shell-text: #dbe7f1;
+  --shell-muted: #8797a6;
+  --key: #1b232c;
+  --key-2: #242e39;
+  --key-text: #ecf3f9;
+  --key-shadow: #0a0d10;
+  --key-fn: #2d2517;
+  --key-fn-2: #473b23;
+  --key-fn-text: #ffcf5a;
+  --ptt: #b12739;
+  --ptt-2: #d84054;
+  --ptt-shadow: #5f101c;
+  --knob: #10151a;
+  --knob-2: #252d36;
+  --knob-edge: #38414b;
+  --accent: #ffb000;
+  --accent-contrast: #0b0e11;
+  --accent-dim: rgba(255, 176, 0, 0.35);
+  --lcd-bg: #000;
+  --lcd-edge: #222a31;
+  --lcd-fg: #f2f6f9;
+  --lcd-dim: #7c8b99;
+  --lcd-accent: #ffb000;
+  --lcd-rx: #4de1c1;
+  --lcd-tx: #ff4d5f;
+  --lcd-glow: rgba(77, 225, 193, 0.12);
+  --lcd-sel: rgba(255, 176, 0, 0.11);
+  --scanline: 0.12;
+  --radio-radius: 22px;
+  --key-radius: 10px;
+  --panel-radius: 18px;
+  --bezel-radius: 12px;
+  --lcd-radius: 3px;
+}
+
+#app.theme-modern {
+  --page: #0a0e13;
+  --page-glow: rgba(92, 225, 230, 0.1);
+  --page-glow-2: rgba(92, 225, 230, 0.035);
+  --text: #e8f6ff;
+  --muted: #7f93a6;
+  --panel: #111923;
+  --panel-2: #18222d;
+  --panel-edge: #273746;
+  --shell: #151d26;
+  --shell-2: #1f2b37;
+  --shell-edge: #304354;
+  --shell-text: #e8f6ff;
+  --shell-muted: #8ba1b3;
+  --key: #1e2a36;
+  --key-2: #273747;
+  --key-text: #e8f6ff;
+  --key-shadow: #0a1118;
+  --key-fn: #15343a;
+  --key-fn-2: #1d4950;
+  --key-fn-text: #8ef4f5;
+  --ptt: #d9445f;
+  --ptt-2: #f05d78;
+  --ptt-shadow: #6b1626;
+  --knob: #101821;
+  --knob-2: #263746;
+  --knob-edge: #3a5062;
+  --accent: #5ce1e6;
+  --accent-contrast: #061014;
+  --accent-dim: rgba(92, 225, 230, 0.34);
+  --lcd-bg: #061018;
+  --lcd-edge: #1b3340;
+  --lcd-fg: #e9f8ff;
+  --lcd-dim: #6f8ca0;
+  --lcd-accent: #5ce1e6;
+  --lcd-rx: #5ce1e6;
+  --lcd-tx: #ff6b81;
+  --lcd-glow: rgba(92, 225, 230, 0.16);
+  --lcd-sel: rgba(92, 225, 230, 0.1);
+  --scanline: 0.04;
+  --radio-radius: 28px;
+  --key-radius: 14px;
+  --panel-radius: 20px;
+  --bezel-radius: 16px;
+  --lcd-radius: 4px;
+}
+
+/* Small theme-specific tuning that is not just a variable. */
+
+#app.theme-authentic .radio {
+  box-shadow:
+    0 24px 50px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+#app.theme-authentic .sim {
+  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.32);
+}
+
+#app.theme-authentic .lcd-scale {
+  border-width: 2px;
+}
+
+#app.theme-authentic .key {
+  font-family: var(--ui-font);
+  font-weight: 600;
+}
+
+#app.theme-modern .radio {
+  box-shadow:
+    0 36px 80px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(92, 225, 230, 0.035),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+#app.theme-modern .screen-bezel {
+  background: #03080d;
+  box-shadow:
+    inset 0 0 0 1px #1b2a35,
+    inset 0 12px 32px rgba(0, 0, 0, 0.92),
+    0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+#app.theme-modern .sim {
+  backdrop-filter: blur(8px);
+}
+
+#app.theme-modern .key.fn {
+  border: 1px solid rgba(92, 225, 230, 0.16);
+}
+
+#app.theme-authentic .theme-btn.active,
+#app.theme-hybrid .theme-btn.active,
+#app.theme-modern .theme-btn.active {
+  box-shadow: 0 0 18px var(--accent-dim);
+}
