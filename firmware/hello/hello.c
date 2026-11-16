@@ -43,10 +43,16 @@
 #define CR1_TE (1u << 3)
 #define CR1_UE (1u << 13)
 
+#define SYST_CSR REG(0xE000E010u)
+#define SYST_RVR REG(0xE000E014u)
+#define SYST_CVR REG(0xE000E018u)
+
+void systick_handler(void);
+
 #define LCD_W 160
 #define LCD_H 128
 
-#define COL_BG     0x0010u   /* dark blue */
+#define COL_BG     0x0000u   /* black */
 #define COL_WHITE  0xFFFFu
 #define COL_YELLOW 0xFFE0u
 #define COL_RED    0xF800u
@@ -93,7 +99,7 @@ const struct vector_table vectors = {
     Default_Handler,
     0,
     Default_Handler,
-    Default_Handler,
+    systick_handler,
 };
 
 __attribute__((naked, noreturn))
@@ -197,11 +203,18 @@ static void gpio_init(void)
     }
     GPIO_ODR(GPIOB) |= (1u << 6) | (1u << 7) | (0x1Fu << 8);
 
-    /* PB2-PB5 keypad columns, input pull-up */
-    for (unsigned p = 2; p <= 5; p++) {
+    /* PA8: vendor early-init sets this high (flash CS / possible mic bias) */
+    gpio_mode(GPIOA, 8, 0x1);
+    GPIO_BSRR(GPIOA) = (1u << 8);
+    /* PB1-PB5 input pull-up (PB2-5 keypad; PB1 vendor pull-up) */
+    for (unsigned p = 1; p <= 5; p++) {
         gpio_mode(GPIOB, p, 0x8);
     }
-    GPIO_ODR(GPIOB) |= (0xFu << 2);
+    GPIO_ODR(GPIOB) |= (0x1Fu << 1);
+    /* PC0 power key and PC7 vendor pull-up */
+    gpio_mode(GPIOC, 0, 0x8);
+    gpio_mode(GPIOC, 7, 0x8);
+    GPIO_ODR(GPIOC) |= (1u << 0) | (1u << 7);
 
     /* PF6 LCD WR idle high; PF4/PF5/PF7 are audio-amp candidates */
     gpio_mode(GPIOF, 4, 0x3);
@@ -376,6 +389,9 @@ static const struct glyph font[] = {
     {'I', {0x00, 0x41, 0x7F, 0x41, 0x00}},
     {'D', {0x7F, 0x41, 0x41, 0x22, 0x1C}},
     {'.', {0x00, 0x60, 0x60, 0x00, 0x00}},
+    {'T', {0x01, 0x01, 0x7F, 0x01, 0x01}},
+    {'X', {0x63, 0x14, 0x08, 0x14, 0x63}},
+    {'V', {0x1F, 0x20, 0x40, 0x20, 0x1F}},
 };
 
 static const uint8_t *glyph(char c)
@@ -570,16 +586,119 @@ static void rf_set_freq(uint32_t hz)
     rf_write_reg(0x39, word >> 16);
 }
 
+static void rf_gpio(uint8_t pin, uint8_t high)
+{
+    uint16_t v = rf_read_reg(0x33);
+    v &= (uint16_t)~(pin << 8);
+    if (high) {
+        v |= pin;
+    } else {
+        v &= (uint16_t)~pin;
+    }
+    rf_write_reg(0x33, v);
+}
+
 static void rf_rx(uint32_t hz)
 {
+    if (hz < 300000000u) {
+        rf_gpio(0x20, 1);              /* VHF RX front-end: GPIO5 on */
+        rf_gpio(0x40, 0);              /* GPIO6 off */
+    } else {
+        rf_gpio(0x8, 0);
+        rf_gpio(0x4, 0);
+    }
     rf_write_reg(0x37, 0x1F0F);
     rf_write_reg(0x30, 0x0000);
+    rf_write_reg(0x1A, 0x1F80);        /* band word, >=74 MHz */
+    rf_write_reg(0x40, 0x3AF0);
     rf_set_freq(hz);
     rf_write_reg(0x43, 0x3028);
     rf_write_reg(0x30, 0xBFF1);
     rf_write_reg(0x47, 0x6140);        /* AF_OUT_BASE | RX audio */
     rf_write_reg(0x48, 0x83FF);        /* max volume for test */
     rf_write_reg(0x78, 0x0000);        /* squelch fully open */
+}
+
+static uint16_t tx_prefix = 0x0004;
+static uint16_t tx_afout = 0x6140;
+static uint16_t tx_mic = 0xE95F;
+static uint16_t tx_dev = 0x00FF;
+static uint16_t tx_pa = 0x64D7;
+static uint16_t tx_afe = 0x302E;
+static uint16_t tx_agc = 0x1041;
+static uint16_t tx_2a = 0x4F18;
+static uint16_t tx_2c = 0x0000;
+static uint16_t tx_2b = 0xC000;
+static uint16_t tx_28 = 0x0A40;
+static uint16_t tx_48 = 0xBBBF;
+
+static void rf_tx(uint32_t hz)
+{
+    rf_write_reg(0x47, tx_afout);
+    rf_write_reg(0x48, tx_48);
+    rf_write_reg(0x37, 0x1D0F);
+    rf_write_reg(0x30, 0x0000);
+    rf_write_reg(0x1A, 0x1F80);
+    rf_set_freq(hz);
+    rf_write_reg(0x30, tx_prefix);
+    if (hz < 300000000u) {
+        rf_gpio(0x8, 1);               /* VHF TX front-end */
+        rf_gpio(0x10, 0);
+    } else {
+        rf_gpio(0x8, 0);
+        rf_gpio(0x4, 1);               /* UHF PA path */
+    }
+    rf_write_reg(0x36, tx_pa);
+    rf_write_reg(0x51, 0x0000);        /* no subaudio tone */
+    rf_write_reg(0x07, 0x0000);
+    rf_write_reg(0x08, 0x0000);
+    rf_write_reg(0x40, tx_dev);
+    rf_write_reg(0x50, 0x3B20);
+    rf_write_reg(0x52, 0x028F);
+    rf_write_reg(0x7E, tx_afe);
+    rf_write_reg(0x19, tx_agc);
+    rf_write_reg(0x2A, tx_2a);
+    if (tx_2c) {
+        rf_write_reg(0x2C, tx_2c);
+    }
+    if (tx_2b) {
+        rf_write_reg(0x2B, tx_2b);
+    }
+    if (tx_28) {
+        rf_write_reg(0x28, tx_28);
+    }
+
+#if 0
+    /* 1 kHz TX tone: proves the modulator/PA path without the mic */
+    uint16_t g = rf_read_reg(0x70);
+    rf_write_reg(0x70, (g & 0x70FF) | 0x8000 | (60 << 8));
+    rf_write_reg(0x30, 0xC3FA);        /* TX tone state */
+    rf_write_reg(0x71, 10324);         /* 1 kHz tone word */
+#else
+    rf_write_reg(0x7D, tx_mic);
+    rf_write_reg(0x30, 0xC1FE);        /* TX on */
+#endif
+}
+
+static void rf_tx_tone(uint32_t hz)
+{
+    rf_write_reg(0x47, 0x6040);        /* AF out muted */
+    rf_write_reg(0x37, 0x1D0F);
+    rf_write_reg(0x30, 0x0000);
+    rf_write_reg(0x1A, 0x1F80);
+    rf_set_freq(hz);
+    rf_write_reg(0x30, 0x0004);
+    rf_gpio(0x8, 1);                   /* VHF TX front-end */
+    rf_gpio(0x10, 0);
+    rf_write_reg(0x36, 0x64D7);        /* PA target 100, low gain */
+    rf_write_reg(0x51, 0x0000);
+    rf_write_reg(0x07, 0x0000);
+    rf_write_reg(0x08, 0x0000);
+    rf_write_reg(0x40, 0x34EA);        /* FM deviation */
+    rf_write_reg(0x50, 0x3B20);        /* TX unmute */
+    rf_write_reg(0x70, 0x8000 | (60 << 8)); /* Tone1, gain 60 */
+    rf_write_reg(0x71, 10324);         /* 1 kHz */
+    rf_write_reg(0x30, 0xC3FA);        /* TX tone state */
 }
 
 static uint16_t rf_rssi(void)
@@ -629,6 +748,173 @@ static void band_sweep(void)
         uart_puts("\r\n");
     }
     band_set(0);
+}
+
+struct tx_pin {
+    uint32_t port;
+    uint8_t pin;
+};
+
+static const struct tx_pin tx_pins[] = {
+    {GPIOF, 4}, {GPIOF, 5}, {GPIOF, 7}, {GPIOD, 2},
+    {GPIOC, 1}, {GPIOC, 2}, {GPIOC, 3}, {GPIOC, 6},
+    {GPIOC, 8}, {GPIOC, 9}, {GPIOC, 10}, {GPIOC, 11},
+    {GPIOC, 13}, {GPIOC, 15},
+};
+
+static void tx_pins_clear(void)
+{
+    for (unsigned i = 0; i < sizeof(tx_pins) / sizeof(tx_pins[0]); i++) {
+        GPIO_BRR(tx_pins[i].port) = (1u << tx_pins[i].pin);
+    }
+}
+
+static void tx_pins_select(uint8_t step)
+{
+    tx_pins_clear();
+    unsigned n = sizeof(tx_pins) / sizeof(tx_pins[0]);
+    if (step >= 1 && step <= n) {
+        unsigned i = step - 1;
+        GPIO_BSRR(tx_pins[i].port) = (1u << tx_pins[i].pin);
+    } else if (step == n + 1) {
+        for (unsigned i = 0; i < n; i++) {
+            GPIO_BSRR(tx_pins[i].port) = (1u << tx_pins[i].pin);
+        }
+    }
+}
+
+static void show_tx_step(uint8_t step)
+{
+    char b[6] = {'T', 'X', ' ', '0', '0', 0};
+    b[3] = '0' + (step / 10) % 10;
+    b[4] = '0' + step % 10;
+    lcd_fill_rect(8, 104, 8 * 12, 14, COL_BG);
+    lcd_text(8, 104, b, COL_WHITE, COL_BG);
+}
+
+#define ADC1_BASE 0x40012400u
+#define ADC_STS   REG(ADC1_BASE + 0x00u)
+#define ADC_CTRL2 REG(ADC1_BASE + 0x08u)
+#define ADC_SPT2  REG(ADC1_BASE + 0x10u)
+#define ADC_OSQ1  REG(ADC1_BASE + 0x2Cu)
+#define ADC_OSQ3  REG(ADC1_BASE + 0x34u)
+#define ADC_ODT   REG(ADC1_BASE + 0x4Cu)
+
+static void adc_init(void)
+{
+    CRM_APB2EN |= (1u << 9);            /* ADC1 clock */
+    gpio_mode(GPIOA, 0, 0x0);           /* PA0 analog */
+    gpio_mode(GPIOA, 1, 0x0);           /* PA1 analog */
+    (void)CRM_APB2EN;
+    delay_ms(5);
+    ADC_CTRL2 |= (1u << 0);             /* ADC enable */
+    delay_ms(5);
+    ADC_CTRL2 |= (1u << 3);             /* calibration init */
+    while (ADC_CTRL2 & (1u << 3)) {
+    }
+    ADC_CTRL2 |= (1u << 2);             /* calibration */
+    while (ADC_CTRL2 & (1u << 2)) {
+    }
+}
+
+static uint16_t adc_read(uint8_t ch)
+{
+    ADC_OSQ1 = (ADC_OSQ1 & ~(0xFu << 20));   /* sequence length 1 */
+    uint32_t spt = ADC_SPT2;
+    if (ch < 10) {
+        spt &= ~(7u << (ch * 3));
+        spt |= (7u << (ch * 3));
+    } else {
+        spt &= ~(7u << ((ch - 10) * 3));
+        spt |= (7u << ((ch - 10) * 3));
+    }
+    ADC_SPT2 = spt;
+    ADC_OSQ3 = ch;
+    ADC_CTRL2 |= (1u << 20) | (1u << 22);
+    for (volatile uint32_t i = 0; i < 20000 && !(ADC_STS & 2u); i++) {
+    }
+    uint16_t v = ADC_ODT & 0xFFFu;
+    ADC_STS = ~2u;
+    return v;
+}
+
+static void show_adc(uint8_t ch, uint16_t v)
+{
+    char b[8] = {'A', '0', ' ', '0', '0', '0', '0', 0};
+    b[1] = (char)('0' + ch);
+    b[3] = (char)('0' + (v / 1000) % 10);
+    b[4] = (char)('0' + (v / 100) % 10);
+    b[5] = (char)('0' + (v / 10) % 10);
+    b[6] = (char)('0' + v % 10);
+    lcd_fill_rect(38, 32 + ch * 22, 7 * 12, 14, COL_BG);
+    lcd_text(38, 32 + ch * 22, b, COL_WHITE, COL_BG);
+}
+
+static void show_bias_step(uint8_t step)
+{
+    char b[8] = {'B', ' ', ' ', ' ', '0', '0', 0, 0};
+    b[3] = '0' + (step / 10) % 10;
+    b[4] = '0' + step % 10;
+    lcd_fill_rect(38, 104, 7 * 12, 14, COL_BG);
+    lcd_text(38, 104, b, COL_WHITE, COL_BG);
+}
+
+struct mic_variant {
+    uint16_t mic;
+    uint16_t dev;
+    uint16_t pa;
+    uint16_t afe;
+    uint16_t agc;
+    uint16_t r2a;
+    uint16_t r48;
+    uint16_t afout;
+    uint16_t r2b;
+    uint16_t r28;
+};
+
+static const struct mic_variant mic_variants[] = {
+    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V00 */
+    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x7400, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V01 */
+    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x6600, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V02 */
+    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x7FFF, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V03 */
+    {0xE95F, 0x34FF, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V04 */
+    {0xE95F, 0x34F0, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V05 */
+    {0xE35F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V06 */
+    {0xE952, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V07 */
+    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x9041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V08 */
+    {0xE95F, 0x34EA, 0x64D7, 0xB02E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V09 */
+    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xB3BF, 0x6140, 0xC000, 0x0A40}, /* V10 */
+    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6142, 0xC000, 0x0A40}, /* V11 */
+    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0x0000, 0x0A40}, /* V12 */
+    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0000}, /* V13 */
+    {0xE95F, 0x34EA, 0x64FF, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V14 */
+    {0xE95F, 0x34FF, 0x64D7, 0x302E, 0x1041, 0x7400, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V15 */
+};
+
+static void show_variant(uint8_t v)
+{
+    char b[6] = {'V', ' ', '0', '0', 0, 0};
+    b[2] = '0' + (v / 10) % 10;
+    b[3] = '0' + v % 10;
+    lcd_fill_rect(38, 104, 7 * 12, 14, COL_BG);
+    lcd_text(38, 104, b, COL_WHITE, COL_BG);
+}
+
+static void set_variant(uint8_t v)
+{
+    tx_mic = mic_variants[v].mic;
+    tx_dev = mic_variants[v].dev;
+    tx_pa = mic_variants[v].pa;
+    tx_afe = mic_variants[v].afe;
+    tx_agc = mic_variants[v].agc;
+    tx_2a = mic_variants[v].r2a;
+    tx_48 = mic_variants[v].r48;
+    tx_afout = mic_variants[v].afout;
+    tx_2b = mic_variants[v].r2b;
+    tx_28 = mic_variants[v].r28;
+    tx_prefix = 0x0004;
+    tx_2c = 0x0000;
+    show_variant(v);
 }
 
 /* ---- keypad ---- */
@@ -711,7 +997,7 @@ static void delay_loops(uint32_t n)
     }
 }
 
-void main(void)
+void main_tx(void)
 {
     for (uint32_t *src = &_sidata, *dst = &_sdata; dst < &_edata;) {
         *dst++ = *src++;
@@ -758,7 +1044,10 @@ void main(void)
     uart_puts("cmds: d=regdump b=band sweep r=rssi\r\n");
 
     uint8_t last_key = 0xFF;
-    uint8_t last_ptt = 0;
+    uint8_t ptt_stable = 0;
+    uint8_t ptt_count = 0;
+    uint8_t tx_step = 0;
+    uint32_t tx_tick = 0;
     uint32_t tick = 0;
 
     for (;;) {
@@ -798,15 +1087,36 @@ void main(void)
         }
 
         uint8_t ptt = (GPIO_IDR(GPIOA) & (1u << 10)) ? 0 : 1;
-        if (ptt != last_ptt) {
-            last_ptt = ptt;
-            lcd_fill_rect(140, 104, 16, 16, ptt ? COL_RED : COL_BG);
-            uart_puts(ptt ? "ptt=1\r\n" : "ptt=0\r\n");
+        if (ptt != ptt_stable) {
+            if (++ptt_count >= 3) {
+                ptt_count = 0;
+                ptt_stable = ptt;
+                lcd_fill_rect(140, 104, 16, 16, ptt ? COL_RED : COL_BG);
+                lcd_fill_rect(8, 104, 8 * 12, 14, COL_BG);
+                if (ptt) {
+                    GPIO_BRR(GPIOC) = (1u << 14);   /* speaker amp off */
+                    rf_tx(446000000u);
+                    tx_step = 0;
+                    tx_tick = 0;
+                    tx_pins_select(0);
+                    show_tx_step(0);
+                } else {
+                    tx_pins_clear();
+                    tx_step = 0;
+                    tx_tick = 0;
+                    rf_rx(446000000u);
+                    GPIO_BSRR(GPIOC) = (1u << 14);  /* amp on */
+                    lcd_text(8, 104, "AUDIO 14", COL_WHITE, COL_BG);
+                }
+                uart_puts(ptt ? "ptt=1\r\n" : "ptt=0\r\n");
+            }
+        } else {
+            ptt_count = 0;
         }
 
         delay_loops(20);
 
-        if (++tick % 10 == 0) {
+        if (!ptt_stable && ++tick % 10 == 0) {
             uint16_t rssi = rf_rssi();
             show_rssi(rssi);
             if (tick % 50 == 0) {
@@ -815,5 +1125,276 @@ void main(void)
                 uart_puts("\r\n");
             }
         }
+    }
+}
+
+
+/* ---------------- AFSK 1200 / AX.25 TX ---------------- */
+
+#define TNC_HZ 145100000u
+#define TONE_GAIN 60
+#define TONE1_1200 12389u
+#define TONE2_2200 22714u
+
+static volatile uint8_t afsk_bits[6000];
+static uint8_t raw_bits[6000];
+static uint16_t raw_len;
+static volatile uint16_t afsk_len, afsk_pos;
+static volatile uint8_t afsk_active;
+static uint8_t stuff_ones;
+
+static uint8_t ax25[400];
+static uint16_t axlen;
+
+static uint8_t kiss_buf[400];
+static uint16_t kiss_len;
+static uint8_t kiss_esc;
+
+static void raw_add(uint8_t b)
+{
+    if (raw_len < sizeof(raw_bits)) {
+        raw_bits[raw_len++] = b;
+    }
+}
+
+static void add_flag(void)
+{
+    for (uint8_t i = 0; i < 8; i++) {
+        raw_add((0x7E >> i) & 1);
+    }
+    stuff_ones = 0;
+}
+
+static void add_byte_stuffed(uint8_t b)
+{
+    for (uint8_t i = 0; i < 8; i++) {
+        uint8_t bit = (b >> i) & 1;
+        if (stuff_ones == 5 && bit) {
+            raw_add(0);
+            stuff_ones = 0;
+        }
+        raw_add(bit);
+        if (bit) {
+            stuff_ones++;
+        } else {
+            stuff_ones = 0;
+        }
+    }
+}
+
+static uint16_t crc16_x25(const uint8_t *d, uint16_t n)
+{
+    uint16_t crc = 0xFFFF;
+    for (uint16_t i = 0; i < n; i++) {
+        crc ^= d[i];
+        for (uint8_t b = 0; b < 8; b++) {
+            if (crc & 1) {
+                crc = (uint16_t)((crc >> 1) ^ 0x8408);
+            } else {
+                crc >>= 1;
+            }
+        }
+    }
+    return (uint16_t)~crc;
+}
+
+void systick_handler(void)
+{
+    if (!afsk_active) {
+        SYST_CSR = 0;
+        return;
+    }
+    if (afsk_pos < afsk_len) {
+        uint8_t t = afsk_bits[afsk_pos++];
+        uint16_t v = 0x8000u | 0x0080u;      /* both generators on */
+        if (t) {
+            v |= (uint16_t)(TONE_GAIN << 8); /* 1200 Hz */
+        } else {
+            v |= TONE_GAIN;                  /* 2200 Hz */
+        }
+        rf_write_reg(0x70, v);
+    } else {
+        afsk_active = 0;
+        SYST_CSR = 0;
+        rf_write_reg(0x70, 0x0000);
+    }
+}
+
+static void rf_tx_afsk_prepare(uint32_t hz)
+{
+    rf_write_reg(0x47, 0x6040);        /* AF out muted */
+    rf_write_reg(0x37, 0x1D0F);
+    rf_write_reg(0x30, 0x0000);
+    rf_write_reg(0x1A, 0x1F80);
+    rf_set_freq(hz);
+    rf_write_reg(0x30, 0x0004);
+    rf_gpio(0x8, 1);                   /* VHF TX front-end */
+    rf_gpio(0x10, 0);
+    rf_write_reg(0x36, 0x64D7);
+    rf_write_reg(0x51, 0x0000);
+    rf_write_reg(0x07, 0x0000);
+    rf_write_reg(0x08, 0x0000);
+    rf_write_reg(0x40, 0x34EA);        /* FM deviation */
+    rf_write_reg(0x50, 0x3B20);        /* TX unmute */
+    rf_write_reg(0x71, TONE1_1200);
+    rf_write_reg(0x72, TONE2_2200);
+    rf_write_reg(0x70, 0x8000u | (uint16_t)(TONE_GAIN << 8) | 0x0080u);
+    rf_write_reg(0x30, 0xC3FA);        /* tone TX state */
+    GPIO_BRR(GPIOC) = (1u << 14);      /* speaker amp off */
+}
+
+static void afsk_send_frame(const uint8_t *frame, uint16_t n)
+{
+    if (afsk_active) {
+        return;
+    }
+    raw_len = 0;
+    stuff_ones = 0;
+    for (uint8_t i = 0; i < 48; i++) {
+        add_flag();
+    }
+    for (uint16_t i = 0; i < n; i++) {
+        add_byte_stuffed(frame[i]);
+    }
+    uint16_t fcs = crc16_x25(frame, n);
+    add_byte_stuffed((uint8_t)(fcs & 0xFF));
+    add_byte_stuffed((uint8_t)(fcs >> 8));
+    for (uint8_t i = 0; i < 8; i++) {
+        add_flag();
+    }
+
+    uint8_t tone = 1;                  /* 1200 Hz mark */
+    for (uint16_t i = 0; i < raw_len; i++) {
+        if (!raw_bits[i]) {
+            tone ^= 1;
+        }
+        afsk_bits[i] = tone;
+    }
+    afsk_len = raw_len;
+    afsk_pos = 0;
+
+    rf_tx_afsk_prepare(TNC_HZ);
+    afsk_active = 1;
+    SYST_RVR = 6666;                   /* 8 MHz / 1200 */
+    SYST_CVR = 0;
+    SYST_CSR = 7;                      /* core clock, irq, enable */
+    for (uint32_t guard = 0; afsk_active && guard < 20000000u; guard++) {
+    }
+    afsk_active = 0;
+    SYST_CSR = 0;
+    rf_write_reg(0x70, 0x0000);
+    rf_rx(TNC_HZ);
+    GPIO_BSRR(GPIOC) = (1u << 14);
+}
+
+static void ax25_addr(const char *call, uint8_t ssid, uint8_t last, uint8_t cbit)
+{
+    for (uint8_t i = 0; i < 6; i++) {
+        char c = call[i];
+        if (!c) {
+            c = ' ';
+        }
+        ax25[axlen++] = (uint8_t)((uint8_t)c << 1);
+    }
+    ax25[axlen++] = (uint8_t)(0x60u | ((ssid & 0xFu) << 1) |
+                              (last ? 1u : 0u) | (cbit ? 0x80u : 0u));
+}
+
+static void send_k8cy(void)
+{
+    axlen = 0;
+    ax25_addr("APRS  ", 0, 0, 0);
+    ax25_addr("AD8NT ", 7, 1, 1);
+    ax25[axlen++] = 0x03;              /* UI */
+    ax25[axlen++] = 0xF0;              /* no layer 3 */
+    const char info[] = ">OpenF8HP AFSK 1200 test";
+    for (uint8_t i = 0; info[i]; i++) {
+        ax25[axlen++] = (uint8_t)info[i];
+    }
+    afsk_send_frame(ax25, axlen);
+}
+
+static void kiss_byte(uint8_t c)
+{
+    if (c == 0xC0) {
+        if (kiss_len > 1 && kiss_buf[0] == 0x00) {
+            afsk_send_frame(kiss_buf + 1, (uint16_t)(kiss_len - 1));
+        }
+        kiss_len = 0;
+        kiss_esc = 0;
+        return;
+    }
+    if (kiss_esc) {
+        if (c == 0xDC) {
+            c = 0xC0;
+        } else if (c == 0xDD) {
+            c = 0xDB;
+        }
+        kiss_esc = 0;
+    } else if (c == 0xDB) {
+        kiss_esc = 1;
+        return;
+    }
+    if (kiss_len < sizeof(kiss_buf)) {
+        kiss_buf[kiss_len++] = c;
+    }
+}
+
+void main(void)
+{
+    for (uint32_t *src = &_sidata, *dst = &_sdata; dst < &_edata;) {
+        *dst++ = *src++;
+    }
+    for (uint32_t *p = &_sbss; p < &_ebss;) {
+        *p++ = 0;
+    }
+
+    clock_hsi_8mhz();
+    gpio_init();
+    uart_init();
+    lcd_init();
+    lcd_fill_rect(0, 0, LCD_W, LCD_H, COL_BG);
+
+    uint16_t id = rf_read_reg(0x00);
+    if (id == 0xFFFF || id == 0x0000) {
+        delay_ms(10);
+        id = rf_read_reg(0x00);
+    }
+    rf_init(id);
+    rf_rx(145100000u);
+    GPIO_BSRR(GPIOC) = (1u << 14);     /* speaker amp on */
+
+    lcd_text(38, 10, "145.100", COL_WHITE, COL_BG);
+    lcd_text(38, 32, "MIC TX", COL_WHITE, COL_BG);
+    lcd_text(38, 78, "PTT = TX", COL_YELLOW, COL_BG);
+    set_variant(0);
+
+    uart_puts("\r\nMIC TX locked V00 @145.100\r\n");
+
+    uint8_t ptt_stable = 0;
+    uint8_t ptt_count = 0;
+
+    for (;;) {
+        uint8_t ptt = (GPIO_IDR(GPIOA) & (1u << 10)) ? 0 : 1;
+        if (ptt != ptt_stable) {
+            if (++ptt_count >= 3) {
+                ptt_count = 0;
+                ptt_stable = ptt;
+                if (ptt) {
+                    GPIO_BRR(GPIOC) = (1u << 14);
+                    rf_tx(145100000u);
+                    lcd_fill_rect(38, 78, 7 * 12, 14, COL_BG);
+                    lcd_text(38, 78, "TX", COL_RED, COL_BG);
+                } else {
+                    rf_rx(145100000u);
+                    GPIO_BSRR(GPIOC) = (1u << 14);
+                    lcd_fill_rect(38, 78, 7 * 12, 14, COL_BG);
+                    lcd_text(38, 78, "PTT = TX", COL_YELLOW, COL_BG);
+                }
+            }
+        } else {
+            ptt_count = 0;
+        }
+        delay_loops(20);
     }
 }

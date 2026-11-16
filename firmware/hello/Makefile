@@ -3,7 +3,7 @@ CFLAGS  ?= --target=thumbv7m-none-eabi -mcpu=cortex-m4 -mthumb \
            -mfloat-abi=soft -Os -ffreestanding -fno-builtin -nostdlib -fuse-ld=lld \
            -Wall -Wextra -Wno-unused-parameter
 LDFLAGS ?= -Wl,-T,linker.ld -Wl,--gc-sections -Wl,-Map=hello.map
-SIZE    ?= 8192
+SIZE    ?= 32768
 
 all: hello.kdhx
 

@@ -9,8 +9,9 @@ Confirmed working on a BF-F8HP Pro (NRF, V0.53):
 - RX at **446.000 MHz**
 - RSSI baseline ~31–33, jumps to **~111** when a 446.000 MHz signal is keyed
 - **audible 446.000 FM voice**; speaker amp enable **PC14 active high**
-- LCD `446.000 / ID 4819 / RSSI NNN / AUDIO 14` + live key code
+- LCD `446.000 / ID 4819 / RSSI NNN` on a **black** background + live key code
 - full keypad map, PTT, backlight
+- TX carrier + 1 kHz tone + **normal mic voice** on 145.100 (V00)
 
 ## What it does
 

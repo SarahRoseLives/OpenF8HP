@@ -42,7 +42,8 @@ See [docs/hardware.md](docs/hardware.md) for the full pin map.
 **Current milestone:** the `hello` bring-up image runs on real hardware —
 USART1 output, ST7735 LCD, full keypad map, PTT, and **FD6818 RX at
 446.000 MHz with live RSSI and audible FM voice** (confirmed: baseline
-~31 → ~111 when keyed; speaker amp `PC14`).
+~31 → ~111 when keyed; speaker amp `PC14`). TX carrier, 1 kHz tone, and
+**normal TX mic voice** are confirmed on 145.100 (locked V00).
 
 - `firmware/hello/` — bring-up image linked at `0x08001000`.
   - ST7735 parallel LCD, backlight `PA4`

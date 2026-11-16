@@ -90,7 +90,7 @@ Chronological record of findings. Newest entries at the bottom.
   the programming cable connected.
 - Extended hello to the LCD: ST7735 parallel init, backlight PA4, `HELLO`
   and a live `KEY XX` line. Built as an 8 KiB / 8-chunk image and flashed.
-- **LCD confirmed on hardware:** white `HELLO` on dark blue, upright,
+- **LCD confirmed on hardware:** white `HELLO` on black, upright,
   `KEY XX` updates on press, backlight on, PTT red square works.
 - Extended hello to **FD6818 RX at 446.000 MHz** with an RSSI display and
   UART diagnostics (`d` register dump, `b` PA11–PA14 band sweep, `r` RSSI).
@@ -102,8 +102,34 @@ Chronological record of findings. Newest entries at the bottom.
 - **Audio path confirmed:** FD6818 AF out `0x47=0x6140`, volume
   `0x48=0x83FF` (max test), squelch `0x78=0` open; **speaker amp enable
   PC14 active high**. 446.000 MHz voice is clearly audible.
-- The radio currently runs the RF+audio hello image. To restore stock, flash
-  the vendor V0.53 `.kdhx` from the backup.
+- **TX carrier confirmed:** UHF PA path, 446.000 MHz, state `0xC1FE`;
+  1 kHz tone via `0x70/0x71` + `0xC3FA` is received (max deviation
+  `0x40=0x00FF`, PA target 100/low gain `0x36=0x64D7`).
+- **Mic audio not yet:** with `0x47` muted → carrier only; with `0x47`
+  unmuted → thump/buzz. Swept PF4/5/7, PD2, PC1/2/3/6/8/9/10/11/13/15 and
+  PA11–14 as candidate mic-bias outputs; no voice. The mic input may be on
+  the MCU ADC (PA0/PA1) or need a codec/register init not yet found.
+- LCD background changed to **black**.
+- **ADC mic check:** PA0/PA1 read ~`0062` at rest and did not change with
+  speech. A passive sweep of PF4/5/7, PD2, PC1/2/3/6/8/9/10/11/13/15 and
+  all-high also produced no ADC response. The mic is not on PA0/PA1 (or its
+  bias is not a simple GPIO). Mic TX therefore needs the vendor codec/audio
+  init or a mic-bias register that has not been found yet.
+- **Mic-gain experiments:** voice is present on every TX variant but very
+  low. Tried `0x7D` (0xE95F..0xFFFF), `0x40` dev/dev_en, `0x7E` TX-MIC
+  DC-filter/AGC-fix, `0x19` MIC-AGC disable, `0x50` TX unmute, `0x52` AF
+  filter, `0x2A`/`0x2C` (0x7FFF/0x5705), PA target/gain, and PB1/PC7
+  pull-ups. None increased the level. PA0/PA1 ADC also shows no mic
+  response. Remaining likely causes: a hardware mic preamp/bias line or a
+  codec/1-wire init not yet identified.
+- **Mic resolved (V00, 145.100):** after adding the full mic-path register
+  writes (`0x2A=4F18`, `0x2B=C000`, `0x28=0A40`, `0x50=3B20`, `0x52=028F`,
+  `0x7E=302E`, `0x19=1041`) and the VHF TX front-end, TX voice works
+  normally. Earlier `rf_tx` omitted those writes and used the UHF front-end.
+  Locked V00: `0x47=6140`, `0x48=BBBF`, `0x40=34EA`, `0x7D=E95F`,
+  `0x36=64D7`, `0x1A=1F80`, state `C1FE`.
+- The radio currently runs the locked **MIC TX V00** image at 145.100.
+  The TNC source/build is preserved in `work/hello_tnc.c` / `work/hello_tnc.kdhx`.
 
 ### Next
 
