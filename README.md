@@ -26,6 +26,41 @@ stock KDH bootloader.
 
 See [docs/hardware.md](docs/hardware.md) for the full pin map.
 
+## Screenshots
+
+<table align="center">
+  <tr>
+    <td align="center">
+      <img src="docs/images/boot-splash.png" width="300" alt="OPENF8HP boot splash"><br>
+      <sub>Boot splash — wordmark only</sub>
+    </td>
+    <td align="center">
+      <img src="docs/images/display-main.png" width="300" alt="Command display"><br>
+      <sub>Command display — 446.0000 MHz, SQL 3, CTCSS 67.0</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/images/display-menu.png" width="300" alt="Service menu"><br>
+      <sub>Service menu</sub>
+    </td>
+    <td align="center">
+      <img src="docs/images/display-ctcss.png" width="300" alt="CTCSS tone selection"><br>
+      <sub>CTCSS tone selection</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/images/display-about.png" width="300" alt="About screen"><br>
+      <sub>About screen</sub>
+    </td>
+    <td align="center">
+      <sub>LCD captures via <code>tools/screencap.py</code><br>
+      Boot splash rendered from <code>firmware/hello/splash.c</code></sub>
+    </td>
+  </tr>
+</table>
+
 ## Tools
 
 | Tool | Purpose |
