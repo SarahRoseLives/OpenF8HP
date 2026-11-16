@@ -204,12 +204,14 @@ observed the other keys in that row but not `3` itself.
     `0x45=0x3359`
   - `0x7D=0xE952` (mic sensitivity, from the vendor init)
 - 446.000 MHz voice was clearly audible with PC14 high.
-- **TX confirmed:** carrier, 1 kHz test tone, and normal **mic voice** work.
-  The working V00 set at 145.100: `0x47=6140`, `0x48=BBBF`, `0x40=34EA`,
+- **TX confirmed:** carrier, 1 kHz test tone, and normal **mic voice** work
+  at both 145.100 and 446.000. The working V00 set: `0x47=6140`,
+  `0x48=BBBF`, `0x40=34EA`,
   `0x7D=E95F`, `0x7E=302E`, `0x19=1041`, `0x2A=4F18`, `0x2B=C000`,
   `0x28=0A40`, `0x50=3B20`, `0x52=028F`, `0x36=64D7`, `0x1A=1F80`,
-  state `C1FE`, VHF front-end GPIO3=1/GPIO4=0. Earlier low mic audio came
-  from omitting the full mic-path writes and using the UHF front-end.
+  state `C1FE`; VHF front-end GPIO3=1/GPIO4=0, UHF GPIO2=1. Earlier low mic
+  audio came from omitting the full mic-path writes and the stale
+  `0x40=0x00FF` default.
 
 ## ST7735 LCD
 

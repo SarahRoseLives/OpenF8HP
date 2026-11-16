@@ -128,8 +128,12 @@ Chronological record of findings. Newest entries at the bottom.
   normally. Earlier `rf_tx` omitted those writes and used the UHF front-end.
   Locked V00: `0x47=6140`, `0x48=BBBF`, `0x40=34EA`, `0x7D=E95F`,
   `0x36=64D7`, `0x1A=1F80`, state `C1FE`.
-- The radio currently runs the locked **MIC TX V00** image at 145.100.
-  The TNC source/build is preserved in `work/hello_tnc.c` / `work/hello_tnc.kdhx`.
+- **446 voice verified:** the earlier 446 mic-low test used the default
+  `0x40=0x00FF`; the 446 voice main now calls `set_variant(0)`
+  (`0x40=0x34EA`), and V00 mic + RX/RSSI/keypad work at 446.000.
+- The radio currently runs the locked **446 V00 voice** image. The 145.100
+  mic image is preserved as `work/hello_mic_v00.c`; the TNC source/build is
+  in `work/hello_tnc.c` / `work/hello_tnc.kdhx`.
 
 ### Next
 

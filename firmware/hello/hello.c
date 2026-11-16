@@ -630,6 +630,7 @@ static uint16_t tx_2a = 0x4F18;
 static uint16_t tx_2c = 0x0000;
 static uint16_t tx_2b = 0xC000;
 static uint16_t tx_28 = 0x0A40;
+static uint16_t tx_uhf = 0x0004;   /* GPIO2 default; V09+ use GPIO4 0x0010 */
 static uint16_t tx_48 = 0xBBBF;
 
 static void rf_tx(uint32_t hz)
@@ -646,7 +647,9 @@ static void rf_tx(uint32_t hz)
         rf_gpio(0x10, 0);
     } else {
         rf_gpio(0x8, 0);
-        rf_gpio(0x4, 1);               /* UHF PA path */
+        rf_gpio(0x4, 0);
+        rf_gpio(0x10, 0);
+        rf_gpio(tx_uhf, 1);            /* UHF PA path: GPIO2 or GPIO4 */
     }
     rf_write_reg(0x36, tx_pa);
     rf_write_reg(0x51, 0x0000);        /* no subaudio tone */
@@ -855,8 +858,8 @@ static void show_bias_step(uint8_t step)
     char b[8] = {'B', ' ', ' ', ' ', '0', '0', 0, 0};
     b[3] = '0' + (step / 10) % 10;
     b[4] = '0' + step % 10;
-    lcd_fill_rect(38, 104, 7 * 12, 14, COL_BG);
-    lcd_text(38, 104, b, COL_WHITE, COL_BG);
+    lcd_fill_rect(38, 78, 7 * 12, 14, COL_BG);
+    lcd_text(38, 78, b, COL_WHITE, COL_BG);
 }
 
 struct mic_variant {
@@ -870,25 +873,26 @@ struct mic_variant {
     uint16_t afout;
     uint16_t r2b;
     uint16_t r28;
+    uint16_t uhf;
 };
 
 static const struct mic_variant mic_variants[] = {
-    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V00 */
-    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x7400, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V01 */
-    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x6600, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V02 */
-    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x7FFF, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V03 */
-    {0xE95F, 0x34FF, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V04 */
-    {0xE95F, 0x34F0, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V05 */
-    {0xE35F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V06 */
-    {0xE952, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V07 */
-    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x9041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V08 */
-    {0xE95F, 0x34EA, 0x64D7, 0xB02E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V09 */
-    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xB3BF, 0x6140, 0xC000, 0x0A40}, /* V10 */
-    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6142, 0xC000, 0x0A40}, /* V11 */
-    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0x0000, 0x0A40}, /* V12 */
-    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0000}, /* V13 */
-    {0xE95F, 0x34EA, 0x64FF, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V14 */
-    {0xE95F, 0x34FF, 0x64D7, 0x302E, 0x1041, 0x7400, 0xBBBF, 0x6140, 0xC000, 0x0A40}, /* V15 */
+    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40, 0x0004}, /* V00 baseline */
+    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x7400, 0xBBBF, 0x6140, 0xC000, 0x0A40, 0x0004}, /* V01 2A=7400 */
+    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x6600, 0xBBBF, 0x6140, 0xC000, 0x0A40, 0x0004}, /* V02 2A=6600 */
+    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x7FFF, 0xBBBF, 0x6140, 0xC000, 0x0A40, 0x0004}, /* V03 2A=7FFF */
+    {0xE95F, 0x3AEA, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40, 0x0004}, /* V04 40=3AEA */
+    {0xE95F, 0x3AF0, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40, 0x0004}, /* V05 40=3AF0 */
+    {0xE95F, 0x3AFF, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40, 0x0004}, /* V06 40=3AFF */
+    {0xE95F, 0x34FF, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40, 0x0004}, /* V07 40=34FF */
+    {0xE95F, 0x34F0, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40, 0x0004}, /* V08 40=34F0 */
+    {0xE95F, 0x34EA, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40, 0x0010}, /* V09 GPIO4 front-end */
+    {0xE95F, 0x3AEA, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40, 0x0010}, /* V10 GPIO4 + 3AEA */
+    {0xE95F, 0x3AF0, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40, 0x0010}, /* V11 GPIO4 + 3AF0 */
+    {0xE35F, 0x3AEA, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40, 0x0004}, /* V12 7D=E35F */
+    {0xE952, 0x3AEA, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0xC000, 0x0A40, 0x0004}, /* V13 7D=E952 */
+    {0xE95F, 0x3AEA, 0x64D7, 0x302E, 0x1041, 0x7400, 0xBBBF, 0x6140, 0xC000, 0x0A40, 0x0004}, /* V14 3AEA+7400 */
+    {0xE95F, 0x3AEA, 0x64D7, 0x302E, 0x1041, 0x4F18, 0xBBBF, 0x6140, 0x0000, 0x0000, 0x0004}, /* V15 3AEA no 2B/28 */
 };
 
 static void show_variant(uint8_t v)
@@ -912,6 +916,7 @@ static void set_variant(uint8_t v)
     tx_afout = mic_variants[v].afout;
     tx_2b = mic_variants[v].r2b;
     tx_28 = mic_variants[v].r28;
+    tx_uhf = mic_variants[v].uhf;
     tx_prefix = 0x0004;
     tx_2c = 0x0000;
     show_variant(v);
@@ -997,7 +1002,7 @@ static void delay_loops(uint32_t n)
     }
 }
 
-void main_tx(void)
+void main(void)
 {
     for (uint32_t *src = &_sidata, *dst = &_sdata; dst < &_edata;) {
         *dst++ = *src++;
@@ -1014,6 +1019,7 @@ void main_tx(void)
     uart_puts("USART1 PA9 @115200, LCD ST7735, FD6818, keypad/PTT\r\n");
 
     lcd_init();
+    lcd_fill_rect(0, 0, LCD_W, LCD_H, COL_BG);
 
     uint16_t rf_id = rf_read_reg(0x00);
     if (rf_id == 0xFFFF || rf_id == 0x0000) {
@@ -1033,7 +1039,7 @@ void main_tx(void)
 
     lcd_text(38, 10, "446.000", COL_WHITE, COL_BG);
     lcd_text(38, 32, idbuf, COL_WHITE, COL_BG);
-    lcd_text(44, 78, "KEY --", COL_YELLOW, COL_BG);
+    set_variant(0);
     show_rssi(rf_rssi());
     GPIO_BSRR(GPIOC) = (1u << 14);     /* speaker amp enable (confirmed) */
     lcd_text(8, 104, "AUDIO 14", COL_WHITE, COL_BG);
@@ -1041,13 +1047,10 @@ void main_tx(void)
     uart_puts("RF id=0x");
     uart_hex16(rf_id);
     uart_puts("\r\n");
-    uart_puts("cmds: d=regdump b=band sweep r=rssi\r\n");
+    uart_puts("MIC TX V00 locked @446.000; cmds: d/b/r\r\n");
 
-    uint8_t last_key = 0xFF;
     uint8_t ptt_stable = 0;
     uint8_t ptt_count = 0;
-    uint8_t tx_step = 0;
-    uint32_t tx_tick = 0;
     uint32_t tick = 0;
 
     for (;;) {
@@ -1066,26 +1069,6 @@ void main_tx(void)
             }
         }
 
-        uint8_t key = scan_once();
-        if (key != last_key) {
-            last_key = key;
-            if (key != 0xFF) {
-                char buf[8] = {'K', 'E', 'Y', ' ', ' ', ' ', ' ', 0};
-                static const char h[] = "0123456789ABCDEF";
-                buf[4] = h[key >> 4];
-                buf[5] = h[key & 0xF];
-                lcd_fill_rect(44, 78, 7 * 12, 14, COL_BG);
-                lcd_text(44, 78, buf, COL_YELLOW, COL_BG);
-                uart_puts("key=0x");
-                uart_hex(key);
-                uart_puts(" ");
-                uart_puts(key_name(key));
-                uart_puts("\r\n");
-            } else {
-                uart_puts("key=release\r\n");
-            }
-        }
-
         uint8_t ptt = (GPIO_IDR(GPIOA) & (1u << 10)) ? 0 : 1;
         if (ptt != ptt_stable) {
             if (++ptt_count >= 3) {
@@ -1096,14 +1079,8 @@ void main_tx(void)
                 if (ptt) {
                     GPIO_BRR(GPIOC) = (1u << 14);   /* speaker amp off */
                     rf_tx(446000000u);
-                    tx_step = 0;
-                    tx_tick = 0;
-                    tx_pins_select(0);
-                    show_tx_step(0);
+                    lcd_text(8, 104, "TX", COL_RED, COL_BG);
                 } else {
-                    tx_pins_clear();
-                    tx_step = 0;
-                    tx_tick = 0;
                     rf_rx(446000000u);
                     GPIO_BSRR(GPIOC) = (1u << 14);  /* amp on */
                     lcd_text(8, 104, "AUDIO 14", COL_WHITE, COL_BG);
@@ -1340,7 +1317,7 @@ static void kiss_byte(uint8_t c)
     }
 }
 
-void main(void)
+void main_mic(void)
 {
     for (uint32_t *src = &_sidata, *dst = &_sdata; dst < &_edata;) {
         *dst++ = *src++;

@@ -11,7 +11,7 @@ Confirmed working on a BF-F8HP Pro (NRF, V0.53):
 - **audible 446.000 FM voice**; speaker amp enable **PC14 active high**
 - LCD `446.000 / ID 4819 / RSSI NNN` on a **black** background + live key code
 - full keypad map, PTT, backlight
-- TX carrier + 1 kHz tone + **normal mic voice** on 145.100 (V00)
+- TX carrier + 1 kHz tone + **normal mic voice** on 145.100 and 446.000 (V00)
 
 ## What it does
 
