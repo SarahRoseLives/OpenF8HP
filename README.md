@@ -130,6 +130,11 @@ python3 mockup/serve.py   # open http://127.0.0.1:8080/
 - [docs/protocols.md](docs/protocols.md) — KDH bootloader, CPS protocol, EEPROM map
 - [docs/log.md](docs/log.md) — chronological research log
 
+## License
+
+MIT — see [LICENSE](LICENSE). Vendor firmware, backups, and extracted assets
+are not relicensed by this project.
+
 ## Safety
 
 - Keep a verified backup before writing anything to the radio.
