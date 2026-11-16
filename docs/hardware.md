@@ -215,6 +215,9 @@ observed the other keys in that row but not `3` itself.
 
 ## ST7735 LCD
 
+- **Command UI:** 160×128 P25-inspired layout; 1× 5×7 font for status/footer,
+  2× for the channel name; blue rail (`0xC3DF`) in RX, red (`0xF800`) in TX;
+  no bottom soft bar.
 - 8-bit 8080 parallel interface.
 - **D0–D7 = PB8–PB15**, **CS = PB6**, **RST = PB7**, **RS/DC = PC12**,
   **WR = PF6**.

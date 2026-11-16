@@ -11,6 +11,7 @@
  * Prints key codes over the cable and shows HELLO + the last key code.
  */
 #include <stdint.h>
+#include <stdbool.h>
 
 #define REG(a) (*(volatile uint32_t *)(a))
 
@@ -56,6 +57,10 @@ void systick_handler(void);
 #define COL_WHITE  0xFFFFu
 #define COL_YELLOW 0xFFE0u
 #define COL_RED    0xF800u
+#define COL_BLUE   0xC3DFu   /* #2F7BFF, P25-style rail/accent */
+#define COL_GRAY   0x8C64u   /* dim rules/text */
+#define COL_DKGRAY 0x3A09u   /* soft-key bar */
+#define COL_IDLE   0x52ACu   /* IDLE state box */
 
 extern uint32_t _estack;
 extern uint32_t _sidata, _sdata, _edata, _sbss, _ebss;
@@ -392,6 +397,17 @@ static const struct glyph font[] = {
     {'T', {0x01, 0x01, 0x7F, 0x01, 0x01}},
     {'X', {0x63, 0x14, 0x08, 0x14, 0x63}},
     {'V', {0x1F, 0x20, 0x40, 0x20, 0x1F}},
+    {'G', {0x3E, 0x41, 0x49, 0x49, 0x7A}},
+    {'J', {0x20, 0x40, 0x41, 0x3F, 0x01}},
+    {'M', {0x7F, 0x02, 0x0C, 0x02, 0x7F}},
+    {'N', {0x7F, 0x04, 0x08, 0x10, 0x7F}},
+    {'P', {0x7F, 0x09, 0x09, 0x09, 0x06}},
+    {'Q', {0x3E, 0x41, 0x51, 0x21, 0x5E}},
+    {'U', {0x3F, 0x40, 0x40, 0x40, 0x3F}},
+    {'W', {0x3F, 0x40, 0x38, 0x40, 0x3F}},
+    {'Z', {0x61, 0x51, 0x49, 0x45, 0x43}},
+    {'/', {0x20, 0x10, 0x08, 0x04, 0x02}},
+    {':', {0x00, 0x36, 0x36, 0x00, 0x00}},
 };
 
 static const uint8_t *glyph(char c)
@@ -426,6 +442,95 @@ static void lcd_text(uint16_t x, uint16_t y, const char *s, uint16_t fg,
         lcd_char(x, y, *s++, fg, bg);
         x += 12;
     }
+}
+
+static void lcd_char1(uint16_t x, uint16_t y, char c, uint16_t fg, uint16_t bg)
+{
+    const uint8_t *g = glyph(c);
+    for (unsigned col = 0; col < 5; col++) {
+        for (unsigned row = 0; row < 7; row++) {
+            uint16_t color = (g[col] >> row) & 1u ? fg : bg;
+            lcd_pixel(x + col, y + row, color);
+        }
+    }
+}
+
+static void lcd_text1(uint16_t x, uint16_t y, const char *s, uint16_t fg,
+                      uint16_t bg)
+{
+    while (*s) {
+        lcd_char1(x, y, *s++, fg, bg);
+        x += 6;
+    }
+}
+
+static void lcd_rssi_text(uint16_t x, uint16_t y, uint16_t rssi)
+{
+    uint16_t dbm = rssi > 160 ? 0 : 160 - rssi;
+    char b[10] = {'R', 'S', 'S', 'I', ' ', '-', '0', '0', '0', 0};
+    b[6] = (char)('0' + (dbm / 100) % 10);
+    b[7] = (char)('0' + (dbm / 10) % 10);
+    b[8] = (char)('0' + dbm % 10);
+    lcd_text1(x, y, b, COL_WHITE, COL_BG);
+}
+
+static void draw_signal(uint16_t x, uint16_t y, uint16_t rssi)
+{
+    unsigned bars = rssi / 22u;
+    if (bars > 5) {
+        bars = 5;
+    }
+    for (unsigned i = 0; i < 5; i++) {
+        uint16_t h = 2 + i;
+        uint16_t color = i < bars ? COL_WHITE : COL_GRAY;
+        lcd_fill_rect(x + i * 3, y + 6 - h, 2, h, color);
+    }
+}
+
+static void draw_battery(uint16_t x, uint16_t y)
+{
+    lcd_fill_rect(x, y, 13, 6, COL_WHITE);
+    lcd_fill_rect(x + 1, y + 1, 11, 4, COL_BG);
+    lcd_fill_rect(x + 2, y + 2, 8, 2, COL_WHITE);
+    lcd_fill_rect(x + 13, y + 2, 1, 2, COL_WHITE);
+}
+
+static void draw_command(bool tx, uint16_t rssi)
+{
+    lcd_fill_rect(0, 0, LCD_W, LCD_H, COL_BG);
+    lcd_fill_rect(0, 0, 2, LCD_H, tx ? COL_RED : COL_BLUE); /* left rail */
+
+    lcd_fill_rect(6, 2, 30, 11, tx ? COL_RED : COL_IDLE);
+    lcd_text1(9, 4, tx ? "TX" : "IDLE", COL_WHITE, tx ? COL_RED : COL_IDLE);
+    lcd_text1(42, 4, "FM ANALOG", COL_BLUE, COL_BG);
+    draw_signal(124, 2, rssi);
+    draw_battery(143, 3);
+
+    lcd_text1(6, 16, "VFO A / 446.000", COL_WHITE, COL_BG);
+    lcd_text1(96, 16, "CH --", COL_WHITE, COL_BG);
+    lcd_fill_rect(6, 25, 148, 1, COL_GRAY);
+
+    lcd_text1(6, 29, tx ? "TRANSMIT" : "FM ANALOG", COL_GRAY, COL_BG);
+    lcd_text(6, 38, tx ? "MIC" : "SIMPLEX", COL_WHITE, COL_BG);
+    lcd_text1(6, 56, tx ? "PWR HIGH FM" : "SQL 3 CTCSS OFF PWR H",
+              COL_WHITE, COL_BG);
+
+    lcd_fill_rect(6, 92, 148, 1, COL_GRAY);
+    lcd_text1(6, 96, tx ? "ON AIR" : "READY", COL_WHITE, COL_BG);
+    lcd_rssi_text(104, 96, rssi);
+    lcd_text1(6, 105, "CONTROL SQUELCH STEP POWER", COL_GRAY, COL_BG);
+    lcd_text1(6, 112, "3", COL_WHITE, COL_BG);
+    lcd_text1(48, 112, "12.5", COL_WHITE, COL_BG);
+    lcd_text1(142, 112, "H", COL_WHITE, COL_BG);
+
+}
+
+static void draw_rssi_only(uint16_t rssi)
+{
+    lcd_fill_rect(124, 2, 16, 8, COL_BG);
+    draw_signal(124, 2, rssi);
+    lcd_fill_rect(104, 96, 55, 8, COL_BG);
+    lcd_rssi_text(104, 96, rssi);
 }
 
 static void lcd_init(void)
@@ -1030,24 +1135,14 @@ void main(void)
     rf_rx(446000000u);
     delay_ms(30);
 
-    char idbuf[8] = {'I', 'D', ' ', ' ', ' ', ' ', ' ', 0};
-    static const char hex[] = "0123456789ABCDEF";
-    idbuf[3] = hex[(rf_id >> 12) & 0xF];
-    idbuf[4] = hex[(rf_id >> 8) & 0xF];
-    idbuf[5] = hex[(rf_id >> 4) & 0xF];
-    idbuf[6] = hex[rf_id & 0xF];
-
-    lcd_text(38, 10, "446.000", COL_WHITE, COL_BG);
-    lcd_text(38, 32, idbuf, COL_WHITE, COL_BG);
     set_variant(0);
-    show_rssi(rf_rssi());
     GPIO_BSRR(GPIOC) = (1u << 14);     /* speaker amp enable (confirmed) */
-    lcd_text(8, 104, "AUDIO 14", COL_WHITE, COL_BG);
+    draw_command(false, rf_rssi());
 
     uart_puts("RF id=0x");
     uart_hex16(rf_id);
     uart_puts("\r\n");
-    uart_puts("MIC TX V00 locked @446.000; cmds: d/b/r\r\n");
+    uart_puts("COMMAND UI @446.000; V00 mic; cmds: d/b/r\r\n");
 
     uint8_t ptt_stable = 0;
     uint8_t ptt_count = 0;
@@ -1065,7 +1160,7 @@ void main(void)
                 uart_puts("rssi=");
                 uart_dec(r);
                 uart_puts("\r\n");
-                show_rssi(r);
+                draw_rssi_only(r);
             }
         }
 
@@ -1074,16 +1169,14 @@ void main(void)
             if (++ptt_count >= 3) {
                 ptt_count = 0;
                 ptt_stable = ptt;
-                lcd_fill_rect(140, 104, 16, 16, ptt ? COL_RED : COL_BG);
-                lcd_fill_rect(8, 104, 8 * 12, 14, COL_BG);
                 if (ptt) {
                     GPIO_BRR(GPIOC) = (1u << 14);   /* speaker amp off */
                     rf_tx(446000000u);
-                    lcd_text(8, 104, "TX", COL_RED, COL_BG);
+                    draw_command(true, rf_rssi());
                 } else {
                     rf_rx(446000000u);
                     GPIO_BSRR(GPIOC) = (1u << 14);  /* amp on */
-                    lcd_text(8, 104, "AUDIO 14", COL_WHITE, COL_BG);
+                    draw_command(false, rf_rssi());
                 }
                 uart_puts(ptt ? "ptt=1\r\n" : "ptt=0\r\n");
             }
@@ -1095,7 +1188,7 @@ void main(void)
 
         if (!ptt_stable && ++tick % 10 == 0) {
             uint16_t rssi = rf_rssi();
-            show_rssi(rssi);
+            draw_rssi_only(rssi);
             if (tick % 50 == 0) {
                 uart_puts("rssi=");
                 uart_dec(rssi);

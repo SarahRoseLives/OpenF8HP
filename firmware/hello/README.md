@@ -9,9 +9,29 @@ Confirmed working on a BF-F8HP Pro (NRF, V0.53):
 - RX at **446.000 MHz**
 - RSSI baseline ~31–33, jumps to **~111** when a 446.000 MHz signal is keyed
 - **audible 446.000 FM voice**; speaker amp enable **PC14 active high**
-- LCD `446.000 / ID 4819 / RSSI NNN` on a **black** background + live key code
-- full keypad map, PTT, backlight
+- LCD **Command layout**: blue rail, IDLE/TX, `FM ANALOG`,
+  `VFO A / 446.000`, large `SIMPLEX`, SQL/CTCSS/PWR, `READY / RSSI`
+- keypad matrix mapped, PTT, backlight
 - TX carrier + 1 kHz tone + **normal mic voice** on 145.100 and 446.000 (V00)
+
+## Command UI
+
+The 446 build uses a P25-inspired service-radio layout adapted to 160×128
+and analog FM. The left rail is blue in RX and **red in TX**; the bottom soft
+bar has been removed.
+
+- `IDLE` / `TX` state box, `FM ANALOG`
+- `VFO A / 446.000 CH --`
+- large channel name: `SIMPLEX`
+- `SQL 3 CTCSS OFF PWR H`
+- `READY` / `RSSI -xxx` footer
+- `CONTROL SQUELCH STEP POWER` with values
+- 1× font for status/footer, 2× for the channel name
+- blue rail: `0xC3DF`; red TX rail: `0xF800`
+
+P25 trunking, talkgroups, zones, and control channels are not implemented;
+the labels are analog equivalents. The keypad soft labels are visual for now;
+menu/memory functions are not wired to this screen yet.
 
 ## What it does
 
@@ -21,9 +41,9 @@ Confirmed working on a BF-F8HP Pro (NRF, V0.53):
 - AF out `0x47=0x6140`, volume `0x48=0x83FF` (max test value),
   squelch `0x78=0` (open)
 - speaker amp **PC14 high**
-- read RSSI (`0x67`) and update the LCD every ~200 ms
-- scan keypad rows `PB8–PB12` / columns `PB2–PB5`
-- PTT `PA10` active low, red square while pressed
+- read RSSI (`0x67`) and update the signal bars / RSSI footer
+- keypad matrix mapped (`scan_once` present; not wired to Command yet)
+- PTT `PA10` active low; TX redraws with a red rail
 - UART commands: `d` = register dump, `b` = PA11–PA14 band sweep,
   `r` = read RSSI
 
@@ -69,8 +89,8 @@ Requires `clang`, `ld.lld`, `llvm-objcopy` and Python 3.
 make
 ```
 
-Outputs `hello.bin` (padded to 8192 bytes) and `hello.kdhx` (KDH-scrambled,
-8 chunks).
+Outputs `hello.bin` (padded to 32768 bytes) and `hello.kdhx` (KDH-scrambled,
+32 chunks).
 
 ## Flash
 

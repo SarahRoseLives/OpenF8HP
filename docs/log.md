@@ -131,9 +131,16 @@ Chronological record of findings. Newest entries at the bottom.
 - **446 voice verified:** the earlier 446 mic-low test used the default
   `0x40=0x00FF`; the 446 voice main now calls `set_variant(0)`
   (`0x40=0x34EA`), and V00 mic + RX/RSSI/keypad work at 446.000.
-- The radio currently runs the locked **446 V00 voice** image. The 145.100
-  mic image is preserved as `work/hello_mic_v00.c`; the TNC source/build is
-  in `work/hello_tnc.c` / `work/hello_tnc.kdhx`.
+- **Command UI (446.000):** ported the P25-inspired service-radio layout to
+  the real 160×128 LCD: blue left rail, `IDLE`/`TX` box, `FM ANALOG`,
+  `VFO A / 446.000 CH --`, large `SIMPLEX`, `SQL/CTCSS/PWR`,
+  `READY`/`RSSI`, and the footer. The bottom soft bar was removed; the rail
+  turns red in TX. P25 trunking is not supported; labels are FM/analog
+  equivalents. The image is now 32 KiB / 32 chunks.
+- The radio currently runs the **446 Command UI** image. The 145.100 mic
+  image is preserved as `work/hello_mic_v00.c`; the 446 voice image as
+  `work/hello_446_voice.c`; the TNC source/build is in `work/hello_tnc.c` /
+  `work/hello_tnc.kdhx`.
 
 ### Next
 

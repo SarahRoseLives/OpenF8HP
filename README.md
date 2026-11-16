@@ -44,6 +44,10 @@ USART1 output, ST7735 LCD, full keypad map, PTT, and **FD6818 RX at
 446.000 MHz with live RSSI and audible FM voice** (confirmed: baseline
 ~31 → ~111 when keyed; speaker amp `PC14`). TX carrier, 1 kHz tone, and
 **normal TX mic voice** are confirmed at 145.100 and 446.000 (locked V00).
+The 446 build now uses a P25-inspired **Command** layout on the 160×128 LCD:
+blue rail, IDLE/TX state, `FM ANALOG`, `VFO A / 446.000`, large `SIMPLEX`,
+SQL/CTCSS/PWR, and `READY / RSSI`; the rail turns red in TX. P25 itself is
+not supported — these are FM/analog equivalents.
 
 - `firmware/hello/` — bring-up image linked at `0x08001000`.
   - ST7735 parallel LCD, backlight `PA4`
@@ -64,6 +68,16 @@ which is git-ignored.
 python3 -m pip install pyserial
 python3 tools/backup.py                 # verified EEPROM backup
 python3 tools/kdhx.py file.kdhx out.bin # decode vendor firmware
+```
+
+## UI mockup
+
+An interactive web mockup of the 160×128 radio UI (three themes) lives in
+[mockup/](mockup/README.md). It is htmx + a small stdlib Python server; it does
+not flash firmware.
+
+```sh
+python3 mockup/serve.py   # open http://127.0.0.1:8080/
 ```
 
 ## Documentation
