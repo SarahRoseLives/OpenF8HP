@@ -153,6 +153,9 @@ Chronological record of findings. Newest entries at the bottom.
   region from RAM (AT32F413 sector size is **1 KB**), then resets.
   `tools/flash_live.py` sends the raw app; KDH update mode remains recovery.
   Verified end-to-end over the programming cable.
+- **Splash:** 160×128 4bpp wordmark-only `OPENF8HP` boot screen (no subtitle,
+  model, or `BOOTING...`). Live stub updates show the same splash with only a
+  progress bar.
 
 ### Next
 

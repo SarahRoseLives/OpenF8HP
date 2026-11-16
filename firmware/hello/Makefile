@@ -18,7 +18,7 @@ $(STUB_BLOB): $(STUB_BIN) ../../tools/bin2c.py
 	python3 ../../tools/bin2c.py $< $@ stub_blob stub_blob_len
 
 hello.elf: hello.c $(STUB_BLOB) linker.ld
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ hello.c $(STUB_BLOB)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ hello.c splash.c $(STUB_BLOB)
 
 hello.bin: hello.elf
 	llvm-objcopy -O binary $< $@

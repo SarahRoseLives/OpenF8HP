@@ -31,6 +31,8 @@ PALETTE_565 = {
     4: 0xF800,  # red
     5: 0x3A09,  # dark gray soft bar
     6: 0x52AC,  # idle box gray
+    7: 0x0863,  # splash navy
+    8: 0x575F,  # splash cyan
 }
 
 

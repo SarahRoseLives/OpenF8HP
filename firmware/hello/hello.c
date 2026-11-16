@@ -12,6 +12,7 @@
  */
 #include <stdint.h>
 #include <stdbool.h>
+#include "splash.h"
 
 extern const uint8_t stub_blob[];
 extern const uint32_t stub_blob_len;
@@ -64,6 +65,8 @@ void systick_handler(void);
 #define COL_GRAY   0x8CB4u   /* dim rules/text */
 #define COL_DKGRAY 0x3A09u   /* soft-key bar */
 #define COL_IDLE   0x52ACu   /* IDLE state box */
+#define COL_NAVY   0x0863u   /* splash background */
+#define COL_CYAN   0x575Fu   /* splash cyan */
 
 static uint8_t battery_pct = 86;
 static uint16_t battery_raw;
@@ -355,6 +358,8 @@ static uint8_t color_index(uint16_t c)
     if (c == COL_RED) return 4;
     if (c == COL_DKGRAY) return 5;
     if (c == COL_IDLE) return 6;
+    if (c == COL_NAVY) return 7;
+    if (c == COL_CYAN) return 8;
     return 1;
 }
 
@@ -561,6 +566,29 @@ static void draw_battery_status(void)
     lcd_fill_rect(130, 2, 30, 9, COL_BG);
     draw_battery(132, 3);
     lcd_text1(147, 3, b, COL_WHITE, COL_BG);
+}
+
+static void lcd_blit_splash(void)
+{
+    lcd_window(0, 0, LCD_W - 1, LCD_H - 1);
+    lcd_cmd(0x2C);
+    for (uint32_t i = 0; i < sizeof(splash_pixels); i++) {
+        uint8_t b = splash_pixels[i];
+        uint16_t c0 = splash_palette[b & 0xFu];
+        uint16_t c1 = splash_palette[b >> 4];
+        lcd_data((uint8_t)(c0 >> 8));
+        lcd_data((uint8_t)c0);
+        lcd_data((uint8_t)(c1 >> 8));
+        lcd_data((uint8_t)c1);
+    }
+}
+
+static void draw_splash(bool flashing)
+{
+    lcd_blit_splash();
+    if (flashing) {
+        lcd_fill_rect(20, 120, 120, 5, COL_GRAY);
+    }
 }
 
 static void draw_command(bool tx, uint16_t rssi)
@@ -1256,6 +1284,8 @@ void main(void)
 
     lcd_init();
     lcd_fill_rect(0, 0, LCD_W, LCD_H, COL_BG);
+    draw_splash(false);
+    delay_ms(1200);
 
     uint16_t rf_id = rf_read_reg(0x00);
     if (rf_id == 0xFFFF || rf_id == 0x0000) {
@@ -1302,6 +1332,7 @@ void main(void)
             } else if (c == 's') {
                 send_screen();
             } else if (c == 'x') {
+                draw_splash(true);
                 uart_puts("entering RAM stub\r\n");
                 enter_stub();
             } else if (c == 'v') {

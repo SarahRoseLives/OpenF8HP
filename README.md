@@ -52,7 +52,8 @@ SQL/CTCSS/PWR, and `READY / RSSI`; the rail turns red in TX. P25 itself is
 not supported — these are FM/analog equivalents. The firmware also has a real
 ADC battery gauge, LOW/MID/HIGH PA levels (SK1), a 60 s TX timeout, serial
 screen capture via [tools/screencap.py](tools/screencap.py), and live flashing
-via the RAM stub in [tools/flash_live.py](tools/flash_live.py).
+via the RAM stub in [tools/flash_live.py](tools/flash_live.py), plus a
+wordmark-only `OPENF8HP` boot splash and a flashing progress bar.
 
 - `firmware/hello/` — bring-up image linked at `0x08001000`.
   - ST7735 parallel LCD, backlight `PA4`

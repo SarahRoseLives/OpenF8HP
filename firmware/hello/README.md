@@ -45,6 +45,15 @@ menu/memory functions are not wired to this screen yet.
   released.
 - `v` over serial prints `bat raw=… pct=… pa=…`.
 
+## Boot splash
+
+- 160×128 4bpp wordmark splash: only `OPENF8HP` (no subtitle, model, or
+  `BOOTING...`).
+- `splash.c` holds a 16-colour palette and packed pixels; `lcd_blit_splash`
+  streams it.
+- During a RAM-stub update the same splash is shown with only a progress bar;
+  the stub draws the bar in 1 KB steps.
+
 ## Live flashing (no update mode)
 
 - The app embeds a 4 KB RAM stub at `0x20004000` (`firmware/stub/`).

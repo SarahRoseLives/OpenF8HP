@@ -33,6 +33,15 @@
 #define CR1_TE (1u << 3)
 #define CR1_UE (1u << 13)
 
+#define GPIOB      0x40010C00u
+#define GPIOC      0x40011000u
+#define GPIOF      0x40011C00u
+#define GPIO_CRL(p)  REG((p) + 0x00u)
+#define GPIO_CRH(p)  REG((p) + 0x04u)
+#define GPIO_ODR(p)  REG((p) + 0x0Cu)
+#define GPIO_BSRR(p) REG((p) + 0x10u)
+#define GPIO_BRR(p)  REG((p) + 0x14u)
+
 #define FLASH_BASE   0x40022000u
 #define FLASH_UNLOCK REG(FLASH_BASE + 0x04u)
 #define FLASH_STS    REG(FLASH_BASE + 0x0Cu)
@@ -145,6 +154,64 @@ static uint8_t uart_getc(void)
     return (uint8_t)USART_DR;
 }
 
+static void lcd_set_data(uint8_t d)
+{
+    uint32_t odr = GPIO_ODR(GPIOB);
+    odr = (odr & ~0xFF00u) | ((uint32_t)d << 8);
+    GPIO_ODR(GPIOB) = odr;
+}
+
+static void lcd_cmd(uint8_t c)
+{
+    GPIO_BRR(GPIOB) = (1u << 6);
+    GPIO_BRR(GPIOC) = (1u << 12);
+    GPIO_BRR(GPIOF) = (1u << 6);
+    lcd_set_data(c);
+    GPIO_BSRR(GPIOF) = (1u << 6);
+    GPIO_BSRR(GPIOB) = (1u << 6);
+}
+
+static void lcd_data(uint8_t d)
+{
+    GPIO_BRR(GPIOB) = (1u << 6);
+    GPIO_BSRR(GPIOC) = (1u << 12);
+    GPIO_BRR(GPIOF) = (1u << 6);
+    lcd_set_data(d);
+    GPIO_BSRR(GPIOF) = (1u << 6);
+    GPIO_BSRR(GPIOB) = (1u << 6);
+}
+
+static void lcd_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
+{
+    lcd_cmd(0x2A);
+    lcd_data(x0 >> 8); lcd_data(x0 & 0xFF);
+    lcd_data(x1 >> 8); lcd_data(x1 & 0xFF);
+    lcd_cmd(0x2B);
+    lcd_data(y0 >> 8); lcd_data(y0 & 0xFF);
+    lcd_data(y1 >> 8); lcd_data(y1 & 0xFF);
+    lcd_cmd(0x2C);
+}
+
+static void lcd_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
+                          uint16_t color)
+{
+    if (!w || !h) return;
+    lcd_window(x, y, x + w - 1, y + h - 1);
+    uint8_t hi = (uint8_t)(color >> 8), lo = (uint8_t)color;
+    for (uint32_t n = (uint32_t)w * h; n; n--) {
+        lcd_data(hi);
+        lcd_data(lo);
+    }
+}
+
+static void draw_progress(uint32_t pos, uint32_t len)
+{
+    uint16_t w = (uint16_t)(((uint32_t)pos * 120u) / len);
+    if (w) {
+        lcd_fill_rect(20, 120, w, 5, 0x575Fu);
+    }
+}
+
 static int flash_wait(void)
 {
     for (uint32_t i = 0; i < 2000000u; i++) {
@@ -249,6 +316,7 @@ void reset_handler(void)
             }
         }
         pos += n;
+        draw_progress(pos, len);
         uart_putc(0x06);
     }
 
