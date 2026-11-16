@@ -92,8 +92,18 @@ Chronological record of findings. Newest entries at the bottom.
   and a live `KEY XX` line. Built as an 8 KiB / 8-chunk image and flashed.
 - **LCD confirmed on hardware:** white `HELLO` on dark blue, upright,
   `KEY XX` updates on press, backlight on, PTT red square works.
-- The radio currently runs the LCD hello image. To restore stock, flash the
-  vendor V0.53 `.kdhx` from the backup.
+- Extended hello to **FD6818 RX at 446.000 MHz** with an RSSI display and
+  UART diagnostics (`d` register dump, `b` PA11–PA14 band sweep, `r` RSSI).
+- Found and fixed the bit-bang edge order: **SCK low → SDA → SCK high**.
+  The inverse order returned chip ID `0x34D0` and static RSSI 65.
+- After the fix: chip ID **`0x4819`** (FD6818), RX state `0xBFF1`,
+  frequency word `0x02A88AC0`, RSSI baseline ~31–33, jumped to **111**
+  while a 446.000 MHz signal was keyed. **RF RX confirmed.**
+- **Audio path confirmed:** FD6818 AF out `0x47=0x6140`, volume
+  `0x48=0x83FF` (max test), squelch `0x78=0` open; **speaker amp enable
+  PC14 active high**. 446.000 MHz voice is clearly audible.
+- The radio currently runs the RF+audio hello image. To restore stock, flash
+  the vendor V0.53 `.kdhx` from the backup.
 
 ### Next
 

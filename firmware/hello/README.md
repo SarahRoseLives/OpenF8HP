@@ -1,35 +1,64 @@
 # hello — BF-F8HP Pro bring-up image
 
 Bare-metal image that runs from `0x08001000` after the KDH bootloader jumps
-to it. It brings up the UART, the ST7735 parallel LCD, the keypad matrix and
-PTT — no RF, audio or codeplug.
+to it. It brings up the UART, ST7735 LCD, keypad, PTT and **FD6818 RX**.
 
-Confirmed working on a BF-F8HP Pro (NRF, V0.53).
+Confirmed working on a BF-F8HP Pro (NRF, V0.53):
 
-What it does:
+- FD6818 chip ID **0x4819**
+- RX at **446.000 MHz**
+- RSSI baseline ~31–33, jumps to **~111** when a 446.000 MHz signal is keyed
+- **audible 446.000 FM voice**; speaker amp enable **PC14 active high**
+- LCD `446.000 / ID 4819 / RSSI NNN / AUDIO 14` + live key code
+- full keypad map, PTT, backlight
 
-- sets HSI to 8 MHz,
-- USART1 `PA9` TX @ **115200**,
-- resets/inits the **ST7735** on its 8-bit 8080 bus and turns the backlight
-  on (`PA4` high),
-- draws `HELLO` and updates a `KEY XX` line with the last key code,
-- scans keypad rows `PB8–PB12` / columns `PB2–PB5`,
-- reads PTT (`PA10`, active low) and shows a red square while pressed,
-- prints key/PTT events over the cable.
+## What it does
 
-## LCD wiring
+- HSI 8 MHz, USART1 `PA9` TX @ 115200
+- ST7735 8-bit 8080 LCD init, backlight `PA4`
+- FD6818 3-wire init and `446.000 MHz` RX
+- AF out `0x47=0x6140`, volume `0x48=0x83FF` (max test value),
+  squelch `0x78=0` (open)
+- speaker amp **PC14 high**
+- read RSSI (`0x67`) and update the LCD every ~200 ms
+- scan keypad rows `PB8–PB12` / columns `PB2–PB5`
+- PTT `PA10` active low, red square while pressed
+- UART commands: `d` = register dump, `b` = PA11–PA14 band sweep,
+  `r` = read RSSI
 
-| Signal | Pin |
+## Wiring
+
+| Block | Pins |
 | --- | --- |
-| D0–D7 | `PB8–PB15` |
-| CS | `PB6` |
-| RST | `PB7` |
-| RS/DC | `PC12` |
-| WR | `PF6` |
-| Backlight | `PA4` (active high) |
+| LCD | D0–D7 `PB8–PB15`, CS `PB6`, RST `PB7`, RS `PC12`, WR `PF6`, BL `PA4` |
+| FD6818 | SCN `PB0`, SCK `PC5`, SDA `PC4` |
+| Keypad | rows `PB8–PB12`, columns `PB2–PB5` |
+| PTT | `PA10` (active low, shared with USART1_RX) |
+| Speaker amp | `PC14` (active high) |
 
-The keypad rows share `PB8–PB12` with LCD D0–D4. CS/RST/WR are held inactive
-while scanning so the LCD cannot latch keypad noise.
+## FD6818 clocking (important)
+
+The vendor bit-bang order is:
+
+```
+SCK low -> set SDA -> delay -> SCK high -> delay
+```
+
+The first version used `SCK high -> SDA -> SCK low`; the chip still answered
+some reads, but returned the wrong chip ID / register values. Correcting the
+edge order made the ID read `0x4819` and RSSI live.
+
+Register readback after init:
+
+```
+reg00=4819   chip id (FD6818)
+reg30=bff1   RX on
+reg37=1f0f   RX power
+reg38=8ac0   freq word low
+reg39=02a8   freq word high  -> 0x02A88AC0 = 446.000 MHz / 10 Hz
+reg43=3028   wide bandwidth
+reg67=xxxx   RSSI, (val & 0x1FF) >> 1
+```
 
 ## Build
 
@@ -50,35 +79,30 @@ Put the radio into update mode (power off, hold **SK1+SK2**, power on), then:
 python3 ../../tools/flash_kdhx.py hello.kdhx --write --yes --read
 ```
 
-`--read` reopens the port after the bootloader reboots and prints whatever the
-app sends.
+## UART diagnostics
 
-## Expected result
+While the app is running:
 
-UART:
-
-```
-OPENF8HP hello
-USART1 PA9 @115200, LCD ST7735, keypad PB8-12/PB2-5, PTT PA10
-.
-key=0x0e 0
-key=release
+```sh
+python3 -c 'import serial,time; s=serial.Serial("/dev/ttyUSB0",115200,timeout=.2); time.sleep(1); s.write(b"d"); time.sleep(1); print(s.read(512).decode("ascii","replace"))'
 ```
 
-LCD:
+`d` dumps the FD6818 registers, `b` sweeps the PA11–PA14 band-select
+candidates and prints RSSI for each, `r` reads RSSI once.
 
-- dark blue background,
-- white `HELLO`,
-- yellow `KEY XX` that follows the last key press,
-- red square while PTT is held,
-- backlight on.
+## Audio test values
 
-## Confirmed key codes
+The hello image uses **max volume** (`0x48=0x83FF`) and **squelch open**
+(`0x78=0`). A production firmware should read the volume knob / codeplug
+settings instead. 446.000 MHz FM voice was clearly audible with PC14 high
+and the programming cable unplugged (the cable disconnects the speaker).
+
+## Key codes
 
 `1=0x02 2=0x03 3=0x04 4=0x05 5=0x06 6=0x07 7=0x09 8=0x0a 9=0x0b`,
 `*=0x0d 0=0x0e #=0x0f`, `Menu=0x11 Up=0x12 Down=0x13 Exit=0x14`,
-`V/M=0x08 A/B=0x0c Band=0x10`, top side `0x01`, bottom side `0x00`,
-PTT `PA10` low.
+`V/M=0x08 A/B=0x0c Band=0x10`, top side `0x01` (SK1), bottom side `0x00`
+(SK2), PTT `PA10` low.
 
 ## Recovery
 

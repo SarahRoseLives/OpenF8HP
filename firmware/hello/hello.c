@@ -22,6 +22,7 @@
 #define GPIOB 0x40010C00u
 #define GPIOC 0x40011000u
 #define GPIOF 0x40011C00u
+#define GPIOD 0x40011400u
 
 #define GPIO_CRL(p)  REG((p) + 0x00u)
 #define GPIO_CRH(p)  REG((p) + 0x04u)
@@ -37,6 +38,7 @@
 #define USART_CR1  REG(USART1 + 0x0Cu)
 
 #define SR_TXE (1u << 7)
+#define SR_RXNE (1u << 5)
 #define CR1_RE (1u << 2)
 #define CR1_TE (1u << 3)
 #define CR1_UE (1u << 13)
@@ -98,10 +100,14 @@ __attribute__((naked, noreturn))
 void Reset_Handler(void)
 {
     __asm volatile(
-        "ldr sp, =_estack\n"
+        "movw r1, #:lower16:_estack\n"
+        "movt r1, #:upper16:_estack\n"
+        "mov sp, r1\n"
         "cpsid i\n"
-        "ldr r0, =0xE000ED08\n"
-        "ldr r1, =0x08001000\n"
+        "movw r0, #0xED08\n"
+        "movt r0, #0xE000\n"
+        "movw r1, #0x1000\n"
+        "movt r1, #0x0800\n"
         "str r1, [r0]\n"
         "bl main\n"
         "1: b 1b\n");
@@ -169,15 +175,19 @@ static void gpio_mode(uint32_t port, unsigned pin, unsigned nibble)
 
 static void gpio_init(void)
 {
-    CRM_APB2EN |= (1u << 2) | (1u << 3) | (1u << 4) | (1u << 7) | (1u << 14);
+    CRM_APB2EN |= (1u << 2) | (1u << 3) | (1u << 4) | (1u << 5) | (1u << 7) | (1u << 14);
     (void)CRM_APB2EN;
 
     /* PA9 USART1_TX, PA10 input pull-up (PTT), PA4 LCD backlight */
     gpio_mode(GPIOA, 9, 0xB);
     gpio_mode(GPIOA, 10, 0x8);
     gpio_mode(GPIOA, 4, 0x3);
+    for (unsigned p = 11; p <= 14; p++) {
+        gpio_mode(GPIOA, p, 0x3);       /* RF band-select candidates */
+    }
     GPIO_ODR(GPIOA) |= (1u << 10);
     GPIO_BRR(GPIOA) = (1u << 4);        /* backlight off for now */
+    GPIO_BRR(GPIOA) = (0xFu << 11);     /* default band bits low */
 
     /* PB6 CS, PB7 RST, PB8-PB15 LCD data / keypad rows */
     gpio_mode(GPIOB, 6, 0x3);
@@ -193,11 +203,37 @@ static void gpio_init(void)
     }
     GPIO_ODR(GPIOB) |= (0xFu << 2);
 
-    /* PF6 LCD WR idle high; PC12 LCD RS/DC low (command) */
+    /* PF6 LCD WR idle high; PF4/PF5/PF7 are audio-amp candidates */
+    gpio_mode(GPIOF, 4, 0x3);
+    gpio_mode(GPIOF, 5, 0x3);
     gpio_mode(GPIOF, 6, 0x3);
+    gpio_mode(GPIOF, 7, 0x3);
     GPIO_ODR(GPIOF) |= (1u << 6);
+    GPIO_BRR(GPIOF) = (1u << 4) | (1u << 5) | (1u << 7);
     gpio_mode(GPIOC, 12, 0x3);
     GPIO_BRR(GPIOC) = (1u << 12);
+    for (unsigned p = 1; p <= 3; p++) {
+        gpio_mode(GPIOC, p, 0x3);
+        GPIO_BRR(GPIOC) = (1u << p);   /* audio candidates */
+    }
+    for (unsigned p = 6; p <= 11; p++) {
+        gpio_mode(GPIOC, p, 0x3);
+        GPIO_BRR(GPIOC) = (1u << p);
+    }
+    for (unsigned p = 13; p <= 15; p++) {
+        gpio_mode(GPIOC, p, 0x3);
+        GPIO_BRR(GPIOC) = (1u << p);
+    }
+    gpio_mode(GPIOD, 2, 0x3);
+    GPIO_BRR(GPIOD) = (1u << 2);       /* PD2 audio candidate */
+
+    /* FD6818: SCN=PB0, SDA=PC4, SCK=PC5 */
+    gpio_mode(GPIOB, 0, 0x3);
+    GPIO_BSRR(GPIOB) = (1u << 0);
+    gpio_mode(GPIOC, 4, 0x3);
+    gpio_mode(GPIOC, 5, 0x3);
+    GPIO_BSRR(GPIOC) = (1u << 4);
+    GPIO_BRR(GPIOC) = (1u << 5);
 }
 
 /* ---- UART ---- */
@@ -226,6 +262,19 @@ static void uart_hex(uint8_t v)
     static const char h[] = "0123456789abcdef";
     uart_putc(h[v >> 4]);
     uart_putc(h[v & 0xF]);
+}
+
+static void uart_hex16(uint16_t v)
+{
+    uart_hex(v >> 8);
+    uart_hex(v & 0xFF);
+}
+
+static void uart_dec(uint16_t v)
+{
+    if (v >= 100) uart_putc('0' + (v / 100) % 10);
+    if (v >= 10) uart_putc('0' + (v / 10) % 10);
+    uart_putc('0' + v % 10);
 }
 
 /* ---- ST7735 8080 bus ---- */
@@ -322,6 +371,11 @@ static const struct glyph font[] = {
     {'Y', {0x07, 0x08, 0x70, 0x08, 0x07}},
     {'-', {0x08, 0x08, 0x08, 0x08, 0x08}},
     {'?', {0x02, 0x01, 0x51, 0x09, 0x06}},
+    {'R', {0x7F, 0x09, 0x19, 0x29, 0x46}},
+    {'S', {0x46, 0x49, 0x49, 0x49, 0x31}},
+    {'I', {0x00, 0x41, 0x7F, 0x41, 0x00}},
+    {'D', {0x7F, 0x41, 0x41, 0x22, 0x1C}},
+    {'.', {0x00, 0x60, 0x60, 0x00, 0x00}},
 };
 
 static const uint8_t *glyph(char c)
@@ -405,6 +459,176 @@ static void lcd_init(void)
     delay_ms(20);
     lcd_fill_rect(0, 0, LCD_W, LCD_H, COL_BG);
     GPIO_BSRR(GPIOA) = (1u << 4);       /* backlight on */
+}
+
+/* ---- FD6818 3-wire bus ---- */
+static void rf_delay(void)
+{
+    for (volatile unsigned i = 0; i < 30; i++) {
+        __asm volatile("nop");
+    }
+}
+
+static void rf_sda_out(void)
+{
+    gpio_mode(GPIOC, 4, 0x3);
+}
+
+static void rf_sda_in(void)
+{
+    gpio_mode(GPIOC, 4, 0x8);
+    GPIO_ODR(GPIOC) |= (1u << 4);        /* pull-up */
+}
+
+static void rf_write_byte(uint8_t v)
+{
+    for (uint8_t m = 0x80; m; m >>= 1) {
+        GPIO_BRR(GPIOC) = (1u << 5);     /* SCK low */
+        if (v & m) {
+            GPIO_BSRR(GPIOC) = (1u << 4);
+        } else {
+            GPIO_BRR(GPIOC) = (1u << 4);
+        }
+        rf_delay();
+        GPIO_BSRR(GPIOC) = (1u << 5);    /* SCK high */
+        rf_delay();
+    }
+}
+
+static void rf_write_reg(uint8_t addr, uint16_t val)
+{
+    GPIO_BRR(GPIOB) = (1u << 0);         /* SCN low */
+    rf_delay();
+    rf_write_byte(addr & 0x7F);
+    rf_write_byte(val >> 8);
+    rf_write_byte(val & 0xFF);
+    GPIO_BSRR(GPIOB) = (1u << 0);        /* SCN high */
+    rf_delay();
+    GPIO_BRR(GPIOC) = (1u << 5);         /* SCK low */
+}
+
+static uint16_t rf_read_reg(uint8_t addr)
+{
+    GPIO_BRR(GPIOB) = (1u << 0);
+    rf_delay();
+    rf_write_byte(addr | 0x80);
+    GPIO_BRR(GPIOC) = (1u << 5);
+    rf_delay();
+    rf_sda_in();
+    rf_delay();
+
+    uint16_t v = 0;
+    for (unsigned i = 0; i < 16; i++) {
+        GPIO_BSRR(GPIOC) = (1u << 5);
+        rf_delay();
+        v <<= 1;
+        if (GPIO_IDR(GPIOC) & (1u << 4)) {
+            v |= 1;
+        }
+        rf_delay();
+        GPIO_BRR(GPIOC) = (1u << 5);
+        rf_delay();
+    }
+
+    rf_sda_out();
+    GPIO_BSRR(GPIOB) = (1u << 0);
+    rf_delay();
+    GPIO_BRR(GPIOC) = (1u << 5);
+    return v;
+}
+
+static void rf_init(uint16_t id)
+{
+    static const struct {
+        uint8_t r;
+        uint16_t v;
+    } seq[] = {
+        {0x00, 0x8000}, {0x00, 0x0000}, {0x37, 0x1D0F},
+        {0x13, 0x03BE}, {0x12, 0x037B}, {0x11, 0x027B}, {0x10, 0x007A},
+        {0x14, 0x0019}, {0x49, 0x2A38}, {0x7B, 0x8420}, {0x19, 0x1041},
+        {0x2A, 0x4F18}, {0x21, 0x06D8}, {0x5C, 0x5665}, {0x5D, 0x0F00},
+        {0x74, 0xFEF0}, {0x44, 0x8D8F}, {0x45, 0x3359}, {0x7D, 0xE952},
+        {0x48, 0xB3BF},
+        {0x1F, 0x5454}, {0x3E, 0xA037}, {0x77, 0x88EF}, {0x4F, 0x3732},
+        {0x26, 0x13A0},
+    };
+    for (unsigned i = 0; i < sizeof(seq) / sizeof(seq[0]); i++) {
+        rf_write_reg(seq[i].r, seq[i].v);
+    }
+    if (id == 0x4819 || id == 0x4829) {
+        uint16_t v = rf_read_reg(0x40);
+        rf_write_reg(0x40, (v & 0xF000) | 0x04E0);
+        v = rf_read_reg(0x31);
+        rf_write_reg(0x31, v & ~0x0002);
+    }
+}
+
+static void rf_set_freq(uint32_t hz)
+{
+    uint32_t word = hz / 10;
+    rf_write_reg(0x38, word & 0xFFFF);
+    rf_write_reg(0x39, word >> 16);
+}
+
+static void rf_rx(uint32_t hz)
+{
+    rf_write_reg(0x37, 0x1F0F);
+    rf_write_reg(0x30, 0x0000);
+    rf_set_freq(hz);
+    rf_write_reg(0x43, 0x3028);
+    rf_write_reg(0x30, 0xBFF1);
+    rf_write_reg(0x47, 0x6140);        /* AF_OUT_BASE | RX audio */
+    rf_write_reg(0x48, 0x83FF);        /* max volume for test */
+    rf_write_reg(0x78, 0x0000);        /* squelch fully open */
+}
+
+static uint16_t rf_rssi(void)
+{
+    return (rf_read_reg(0x67) & 0x01FF) >> 1;
+}
+
+static void show_rssi(uint16_t rssi)
+{
+    char b[9] = "RSSI    ";
+    b[5] = '0' + (rssi / 100) % 10;
+    b[6] = '0' + (rssi / 10) % 10;
+    b[7] = '0' + rssi % 10;
+    lcd_fill_rect(32, 54, 8 * 12, 14, COL_BG);
+    lcd_text(32, 54, b, COL_YELLOW, COL_BG);
+}
+
+static void band_set(uint8_t b)
+{
+    uint32_t odr = GPIO_ODR(GPIOA);
+    odr = (odr & ~(0xFu << 11)) | ((uint32_t)(b & 0xF) << 11);
+    GPIO_ODR(GPIOA) = odr;
+}
+
+static void rf_dump(void)
+{
+    static const uint8_t regs[] = {0x00, 0x30, 0x37, 0x38, 0x39, 0x43, 0x47, 0x48, 0x67, 0x78};
+    for (unsigned i = 0; i < sizeof(regs); i++) {
+        uart_puts("reg");
+        uart_hex(regs[i]);
+        uart_puts("=");
+        uart_hex16(rf_read_reg(regs[i]));
+        uart_puts("\r\n");
+    }
+}
+
+static void band_sweep(void)
+{
+    for (uint8_t b = 0; b < 16; b++) {
+        band_set(b);
+        delay_ms(30);
+        uint16_t r = rf_rssi();
+        uart_puts("band=0x");
+        uart_hex(b);
+        uart_puts(" rssi=");
+        uart_dec(r);
+        uart_puts("\r\n");
+    }
+    band_set(0);
 }
 
 /* ---- keypad ---- */
@@ -500,18 +724,59 @@ void main(void)
     gpio_init();
     uart_init();
 
-    uart_puts("\r\nOPENF8HP hello\r\n");
-    uart_puts("USART1 PA9 @115200, LCD ST7735, keypad PB8-12/PB2-5, PTT PA10\r\n");
+    uart_puts("\r\nOPENF8HP RF hello\r\n");
+    uart_puts("USART1 PA9 @115200, LCD ST7735, FD6818, keypad/PTT\r\n");
 
     lcd_init();
-    lcd_text(51, 20, "HELLO", COL_WHITE, COL_BG);
-    lcd_text(10, 50, "KEY --", COL_YELLOW, COL_BG);
+
+    uint16_t rf_id = rf_read_reg(0x00);
+    if (rf_id == 0xFFFF || rf_id == 0x0000) {
+        delay_ms(10);
+        rf_id = rf_read_reg(0x00);
+    }
+    rf_init(rf_id);
+    rf_rx(446000000u);
+    delay_ms(30);
+
+    char idbuf[8] = {'I', 'D', ' ', ' ', ' ', ' ', ' ', 0};
+    static const char hex[] = "0123456789ABCDEF";
+    idbuf[3] = hex[(rf_id >> 12) & 0xF];
+    idbuf[4] = hex[(rf_id >> 8) & 0xF];
+    idbuf[5] = hex[(rf_id >> 4) & 0xF];
+    idbuf[6] = hex[rf_id & 0xF];
+
+    lcd_text(38, 10, "446.000", COL_WHITE, COL_BG);
+    lcd_text(38, 32, idbuf, COL_WHITE, COL_BG);
+    lcd_text(44, 78, "KEY --", COL_YELLOW, COL_BG);
+    show_rssi(rf_rssi());
+    GPIO_BSRR(GPIOC) = (1u << 14);     /* speaker amp enable (confirmed) */
+    lcd_text(8, 104, "AUDIO 14", COL_WHITE, COL_BG);
+
+    uart_puts("RF id=0x");
+    uart_hex16(rf_id);
+    uart_puts("\r\n");
+    uart_puts("cmds: d=regdump b=band sweep r=rssi\r\n");
 
     uint8_t last_key = 0xFF;
     uint8_t last_ptt = 0;
     uint32_t tick = 0;
 
     for (;;) {
+        if (USART_SR & SR_RXNE) {
+            char c = (char)USART_DR;
+            if (c == 'd') {
+                rf_dump();
+            } else if (c == 'b') {
+                band_sweep();
+            } else if (c == 'r') {
+                uint16_t r = rf_rssi();
+                uart_puts("rssi=");
+                uart_dec(r);
+                uart_puts("\r\n");
+                show_rssi(r);
+            }
+        }
+
         uint8_t key = scan_once();
         if (key != last_key) {
             last_key = key;
@@ -520,8 +785,8 @@ void main(void)
                 static const char h[] = "0123456789ABCDEF";
                 buf[4] = h[key >> 4];
                 buf[5] = h[key & 0xF];
-                lcd_fill_rect(10, 50, 7 * 12, 14, COL_BG);
-                lcd_text(10, 50, buf, COL_YELLOW, COL_BG);
+                lcd_fill_rect(44, 78, 7 * 12, 14, COL_BG);
+                lcd_text(44, 78, buf, COL_YELLOW, COL_BG);
                 uart_puts("key=0x");
                 uart_hex(key);
                 uart_puts(" ");
@@ -535,13 +800,20 @@ void main(void)
         uint8_t ptt = (GPIO_IDR(GPIOA) & (1u << 10)) ? 0 : 1;
         if (ptt != last_ptt) {
             last_ptt = ptt;
-            lcd_fill_rect(130, 100, 20, 20, ptt ? COL_RED : COL_BG);
+            lcd_fill_rect(140, 104, 16, 16, ptt ? COL_RED : COL_BG);
             uart_puts(ptt ? "ptt=1\r\n" : "ptt=0\r\n");
         }
 
-        delay_loops(25);
-        if (++tick % 100 == 0) {
-            uart_puts(".\r\n");
+        delay_loops(20);
+
+        if (++tick % 10 == 0) {
+            uint16_t rssi = rf_rssi();
+            show_rssi(rssi);
+            if (tick % 50 == 0) {
+                uart_puts("rssi=");
+                uart_dec(rssi);
+                uart_puts("\r\n");
+            }
         }
     }
 }

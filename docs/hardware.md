@@ -84,7 +84,8 @@ The app is linked at flash base **`0x08001000`**.
 | PC7 | input, pull-up | separate key/detect (PTT candidate is PA10) | pin init |
 | PC8–PC11 | output | TBD | pin init output mask |
 | **PC12** | output | **LCD RS / D/C** | LCD write helpers |
-| PC13–PC15 | output | TBD (PC15 cleared during power-down) | pin init |
+| PC13, PC15 | output | TBD (PC15 cleared during power-down) | pin init |
+| **PC14** | output | **speaker amp enable, active high** | confirmed on hardware; 446 RX audio audible with PC14 high |
 
 ### GPIOD / GPIOF
 
@@ -174,14 +175,35 @@ observed the other keys in that row but not `3` itself.
   - **SCN = PB0**
   - **SCK = PC5**
   - **SDA = PC4** (bidirectional; input mode for reads)
+- Bit order: **SCK low → set SDA → delay → SCK high → delay** (MSB first).
+  This edge order is critical; the inverse order returns bogus register data.
 - Write transaction: SCN low → 7-bit register address → 16-bit value (MSB
-  first) → SCN high → SCK idle high.
+  first) → SCN high → SCK low (idle).
 - Init function: **`0x0800e604`**; register writes go through
   **`0x0800fd40`**; bit-bang byte routine **`0x0800f4ec`**.
 - State register `0x30`: RX `0xBFF1`, TX `0xC1FE`, tone `0x0302`,
   TX tone `0xC3FA`.
 - Frequency registers `0x38` / `0x39`; bandwidth `0x43`
   (wide `0x3028`, narrow `0x4048`).
+- **Confirmed on hardware:** chip ID **`0x4819`** (FD6818);
+  RX at **446.000 MHz**; register readback matches writes
+  (`0x30=0xBFF1`, `0x37=0x1F0F`, `0x38=0x8AC0`, `0x39=0x02A8`,
+  `0x43=0x3028`); RSSI (`0x67`) baseline ~31–33 and jumps to **~111**
+  when a 446.000 MHz signal is keyed.
+- 446.000 MHz frequency word: `0x02A88AC0` = 44,600,000 (Hz / 10).
+- PA11–PA14 are configured as outputs (band-select candidates, default low);
+  RX worked with the default. A diagnostic sweep is available in the hello
+  image (`b` command).
+- **Audio path confirmed on hardware:** speaker amp enable is **PC14 active
+  high**. RX audio registers used by the hello image:
+  - `0x47 = 0x6140` (AF out, RX audio state 1)
+  - `0x48 = 0x83FF` (max test volume; vendor AF path uses
+    `0x800F | (cal << 4)`)
+  - `0x78 = 0x0000` (squelch fully open for the test)
+  - AF response from the vendor init: `0x74=0xFEF0`, `0x44=0x8D8F`,
+    `0x45=0x3359`
+  - `0x7D=0xE952` (mic sensitivity, from the vendor init)
+- 446.000 MHz voice was clearly audible with PC14 high.
 
 ## ST7735 LCD
 
@@ -195,7 +217,8 @@ observed the other keys in that row but not `3` itself.
 - Horizontal clamp in the driver is **160** pixels (`cmp r4,#0xA0`).
 - Backlight: **PA4, active high** (`0x0800B20C`).
 - **Confirmed on hardware:** the hello image initializes this panel and
-  displays `HELLO` plus a live key code with the correct orientation.
+  displays `446.000`, `ID 4819`, `RSSI`, and a live key code in the correct
+  orientation.
 
 ## External SPI NOR
 

@@ -20,6 +20,7 @@ stock KDH bootloader.
 | LCD bus | D0–D7 `PB8–PB15`, CS `PB6`, RST `PB7`, RS `PC12`, WR `PF6`, backlight `PA4` |
 | Keypad | 5 rows `PB8–PB12`, 4 columns `PB2–PB5` (rows share LCD D0–D4) |
 | PTT | `PA10`, active low (shared with USART1_RX) |
+| Speaker amp | `PC14`, active high |
 | Power key | `PC0` |
 | Config memory | 64 KiB EEPROM/address space over the CPS protocol |
 
@@ -39,10 +40,14 @@ See [docs/hardware.md](docs/hardware.md) for the full pin map.
 ## Firmware
 
 **Current milestone:** the `hello` bring-up image runs on real hardware —
-USART1 output, ST7735 `HELLO` + live key code, full keypad map, and PTT.
+USART1 output, ST7735 LCD, full keypad map, PTT, and **FD6818 RX at
+446.000 MHz with live RSSI and audible FM voice** (confirmed: baseline
+~31 → ~111 when keyed; speaker amp `PC14`).
 
 - `firmware/hello/` — bring-up image linked at `0x08001000`.
   - ST7735 parallel LCD, backlight `PA4`
+  - FD6818 RX (`SCN PB0`, `SCK PC5`, `SDA PC4`), 446.000 MHz + RSSI
+  - RX audio: AF out/volume/squelch, speaker amp `PC14` high
   - keypad matrix rows `PB8–PB12`, columns `PB2–PB5`
   - PTT `PA10` active low
   - USART1 `PA9` @ 115200 for diagnostics

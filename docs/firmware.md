@@ -115,6 +115,24 @@ The FD6818 state function is `0x0800F998(state)` with
 `state 1 = RX (0xBFF1)`, `state 2 = TX (0xC1FE)`, `state 3 = tone`,
 `state 4 = TX tone (0xC3FA)`.
 
+Bit-bang edge order (from `0x0800F4EC`): **SCK low → SDA → delay → SCK high
+→ delay**, MSB first. The reverse order still gets some replies but returns
+wrong register values (observed: chip ID `0x34D0` instead of `0x4819`).
+
+Confirmed on hardware with the hello image: chip ID `0x4819`, RX at
+**446.000 MHz** (frequency word `0x02A88AC0`), and RSSI `0x67` responds to a
+keyed 446.000 signal (baseline ~31–33 → ~111).
+
+Audio path confirmed on hardware:
+
+- speaker amp enable **PC14 active high**
+- `0x47 = 0x6140` (AF out, RX audio)
+- `0x48 = 0x83FF` (max test volume; vendor AF path uses
+  `0x800F | (cal << 4)`)
+- `0x78 = 0x0000` (squelch open for the test)
+- AF response: `0x74=0xFEF0`, `0x44=0x8D8F`, `0x45=0x3359`
+- 446.000 MHz voice was audible.
+
 ## ST7735 init
 
 `0x080169F4` resets the panel (PB7) then writes the ST7735 sequence:
@@ -131,7 +149,8 @@ Window and pixel helpers: `0x08016890` (0x2A/0x2B), `0x0801683C`
 Backlight is **PA4 active high** (`0x0800B20C`).
 
 The `firmware/hello` image reproduces this init and was confirmed on hardware:
-the panel shows `HELLO` plus a live key code in the correct orientation.
+the panel shows `446.000`, `ID 4819`, `RSSI`, and a live key code in the
+correct orientation.
 
 ## Keypad
 
