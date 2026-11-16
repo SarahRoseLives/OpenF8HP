@@ -31,8 +31,8 @@ bar has been removed.
 - blue rail: `0xC3DF`; red TX rail: `0xF800`
 
 P25 trunking, talkgroups, zones, and control channels are not implemented;
-the labels are analog equivalents. The keypad soft labels are visual for now;
-menu/memory functions are not wired to this screen yet.
+the labels are analog equivalents. The menu is wired to frequency, power,
+about, and exit; memory/channel functions are not wired yet.
 
 ## Battery and PA
 
@@ -57,6 +57,17 @@ menu/memory functions are not wired to this screen yet.
   testing.
 - The VFO line is updated without a full-screen redraw, so entering digits is
   responsive.
+
+## Menu
+
+`Menu` opens the service menu; `Up`/`Down` navigate, `Menu` selects, and
+`Exit` backs out.
+
+- **FREQUENCY** — opens the six-digit VFO entry.
+- **POWER** — cycles PA LOW/MID/HIGH.
+- **ABOUT** — VFO, PA, battery, and credits: *Created by Sarah Rose AD8NT*
+  (the LCD font is uppercase).
+- **EXIT** — returns to the Command screen.
 
 ## Remote buttons
 

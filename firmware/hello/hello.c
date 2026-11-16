@@ -78,6 +78,11 @@ static uint32_t vfo_hz = 446000000u;
 static uint8_t freq_entry;
 static uint8_t freq_digits[6];
 static uint8_t freq_len;
+static uint8_t menu_active;
+static uint8_t menu_screen;
+static uint8_t menu_index;
+static uint8_t menu_latch;
+static uint8_t menu_lock;
 
 extern uint32_t _estack;
 extern uint32_t _sidata, _sdata, _edata, _sbss, _ebss;
@@ -1003,9 +1008,140 @@ static void vfo_set(uint32_t hz, bool tx)
     print_vfo();
 }
 
+static const char *const menu_names[4] = {
+    "FREQUENCY", "POWER", "ABOUT", "EXIT"
+};
+
+static void draw_menu(bool tx)
+{
+    lcd_fill_rect(0, 0, LCD_W, LCD_H, COL_BG);
+    lcd_fill_rect(0, 0, 2, LCD_H, COL_BLUE);
+    lcd_text(6, 4, "MENU", COL_WHITE, COL_BG);
+    lcd_text1(6, 20, "SERVICE SETTINGS", COL_GRAY, COL_BG);
+    lcd_fill_rect(6, 30, 148, 1, COL_GRAY);
+
+    for (uint8_t i = 0; i < 4; i++) {
+        uint16_t y = (uint16_t)(38 + i * 19);
+        if (i == menu_index) {
+            lcd_fill_rect(6, (uint16_t)(y - 2), 148, 13, COL_DKGRAY);
+        }
+        uint16_t fg = i == menu_index ? COL_WHITE : COL_GRAY;
+        lcd_text1(10, y, menu_names[i], fg, COL_BG);
+
+        char value[9] = "";
+        if (i == 0) {
+            format_hz(value, vfo_hz);
+        } else if (i == 1) {
+            const char *p = pa_names[pa_level];
+            for (uint8_t n = 0; p[n] && n < 8; n++) {
+                value[n] = p[n];
+            }
+        } else if (i == 2) {
+            value[0] = 'I'; value[1] = 'N'; value[2] = 'F'; value[3] = 'O';
+        } else {
+            value[0] = 'C'; value[1] = 'L'; value[2] = 'O';
+            value[3] = 'S'; value[4] = 'E';
+        }
+        lcd_text1(104, y, value, fg, COL_BG);
+    }
+
+    lcd_fill_rect(6, 108, 148, 1, COL_GRAY);
+    lcd_text1(6, 116, "UP/DOWN MENU=OK EXIT=BACK", COL_GRAY, COL_BG);
+}
+
+static void draw_about(void)
+{
+    lcd_fill_rect(0, 0, LCD_W, LCD_H, COL_BG);
+    lcd_fill_rect(0, 0, 2, LCD_H, COL_BLUE);
+    lcd_text(6, 4, "ABOUT", COL_WHITE, COL_BG);
+
+    char f[9];
+    format_hz(f, vfo_hz);
+    char b[3] = {'0', '0', 0};
+    uint8_t pct = battery_pct > 99 ? 99 : battery_pct;
+    b[0] = (char)('0' + pct / 10);
+    b[1] = (char)('0' + pct % 10);
+
+    lcd_fill_rect(6, 24, 148, 1, COL_GRAY);
+    lcd_text1(6, 30, "OPENF8HP", COL_WHITE, COL_BG);
+    lcd_text1(6, 44, "CREATED BY", COL_GRAY, COL_BG);
+    lcd_text1(6, 54, "SARAH ROSE AD8NT", COL_WHITE, COL_BG);
+    lcd_fill_rect(6, 66, 148, 1, COL_GRAY);
+    lcd_text1(6, 74, "VFO ", COL_GRAY, COL_BG);
+    lcd_text1(30, 74, f, COL_WHITE, COL_BG);
+    lcd_text1(6, 84, "PA  ", COL_GRAY, COL_BG);
+    lcd_text1(30, 84, pa_names[pa_level], COL_WHITE, COL_BG);
+    lcd_text1(6, 94, "BAT ", COL_GRAY, COL_BG);
+    lcd_text1(30, 94, b, COL_WHITE, COL_BG);
+    lcd_text1(42, 94, "%", COL_GRAY, COL_BG);
+    lcd_fill_rect(6, 108, 148, 1, COL_GRAY);
+    lcd_text1(6, 116, "MENU/EXIT=BACK", COL_GRAY, COL_BG);
+}
+
+static void menu_open(bool tx)
+{
+    menu_active = 1;
+    menu_screen = 0;
+    menu_index = 0;
+    menu_latch = 1;
+    menu_lock = 20;
+    draw_menu(tx);
+}
+
+static void menu_key(uint8_t key, bool tx)
+{
+    if (menu_screen == 1) {
+        if (key == 0x11 || key == 0x14) {
+            menu_screen = 0;
+            draw_menu(tx);
+        }
+        return;
+    }
+
+    if (key == 0x12) {
+        if (menu_index > 0) {
+            menu_index--;
+        }
+        draw_menu(tx);
+    } else if (key == 0x13) {
+        if (menu_index < 3) {
+            menu_index++;
+        }
+        draw_menu(tx);
+    } else if (key == 0x11) {
+        if (menu_index == 0) {
+            menu_active = 0;
+            freq_entry = 1;
+            freq_len = 0;
+            draw_entry_start();
+        } else if (menu_index == 1) {
+            pa_level = (uint8_t)((pa_level + 1) % 3);
+            tx_pa = pa_targets[pa_level];
+            draw_menu(tx);
+        } else if (menu_index == 2) {
+            menu_screen = 1;
+            draw_about();
+        } else {
+            menu_active = 0;
+            draw_command(tx, rf_rssi());
+        }
+    } else if (key == 0x14) {
+        menu_active = 0;
+        draw_command(tx, rf_rssi());
+    }
+}
+
 static void handle_key(uint8_t key, bool tx)
 {
     if (key == 0xFF) {
+        menu_latch = 0;
+        return;
+    }
+    if (menu_active) {
+        if (menu_latch || menu_lock) {
+            return;
+        }
+        menu_key(key, tx);
         return;
     }
 
@@ -1053,6 +1189,8 @@ static void handle_key(uint8_t key, bool tx)
         pa_level = (uint8_t)((pa_level + 1) % 3);
         tx_pa = pa_targets[pa_level];
         draw_command(tx, rf_rssi());
+    } else if (key == 0x11) {           /* Menu */
+        menu_open(tx);
     }
 }
 
@@ -1611,6 +1749,8 @@ void main(void)
                     tx_ticks = 0;
                     tx_cut = 0;
                     freq_entry = 0;
+                    menu_active = 0;
+                    menu_screen = 0;
                     GPIO_BRR(GPIOC) = (1u << 14);   /* speaker amp off */
                     rf_tx(vfo_hz);
                     draw_command(true, rf_rssi());
@@ -1638,9 +1778,12 @@ void main(void)
             tx_cut = 0;
         }
 
+        if (menu_lock) {
+            menu_lock--;
+        }
         delay_loops(20);
 
-        if (!ptt_stable && ++tick % 10 == 0) {
+        if (!ptt_stable && !menu_active && ++tick % 10 == 0) {
             battery_update();
             uint16_t rssi = rf_rssi();
             draw_rssi_only(rssi);

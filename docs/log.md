@@ -173,3 +173,7 @@ Chronological record of findings. Newest entries at the bottom.
 - **Remote buttons:** `K <hexmask>` virtual key mask (bit N = key code N, bit
   22 PTT, bit 21 power), merged with physical keys. `tools/buttons.py` provides
   list/tap/down/up/clear/state.
+
+- **Menu:** `Menu` opens a service list (Frequency, Power, About, Exit);
+  `Up`/`Down` navigate, `Menu` selects, `Exit` backs out. Power cycles PA.
+  About credits **Created by Sarah Rose AD8NT**.
