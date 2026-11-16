@@ -44,7 +44,7 @@ about, and exit; memory/channel functions are not wired yet.
   `0x64D7`; the default is LOW.
 - TX has a 60 s timeout; it drops the carrier and returns to RX until PTT is
   released.
-- `v` over serial prints `bat raw=… pct=… pa=…`.
+- `v` over serial prints `bat raw=… pct=… pa=… sql=… amp=…`.
 
 ## VFO entry
 
@@ -65,9 +65,19 @@ about, and exit; memory/channel functions are not wired yet.
 
 - **FREQUENCY** — opens the six-digit VFO entry.
 - **POWER** — cycles PA LOW/MID/HIGH.
+- **SQUELCH** — cycles SQL 0–9. SQL 0 is fully open; the firmware uses the
+  live RSSI and mutes the speaker amp (`PC14`) below the threshold. SQL 3 =
+  34, just above the ~28–30 RSSI noise floor; higher levels add 4 per step
+  (SQL 9 = 58). The FD6818 `0x78` threshold was not muting this audio path,
+  so it is kept open.
+- **STEP** — cycles 5.0, 10.0, 12.5, 25.0, 50.0 kHz. Up/Down on the Command
+  screen tunes the VFO by this step.
+- **BACKLIGHT** — toggles LCD backlight `PA4`.
 - **ABOUT** — VFO, PA, battery, and credits: *Created by Sarah Rose AD8NT*
   (the LCD font is uppercase).
 - **EXIT** — returns to the Command screen.
+
+The VFO display uses four decimal places so 12.5 kHz steps are visible.
 
 ## Remote buttons
 

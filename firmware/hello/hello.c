@@ -83,6 +83,11 @@ static uint8_t menu_screen;
 static uint8_t menu_index;
 static uint8_t menu_latch;
 static uint8_t menu_lock;
+static uint8_t sq_level = 3;
+static uint8_t step_index = 2;
+static const uint16_t step_hz[5] = {5000, 10000, 12500, 25000, 50000};
+static const char *const step_names[5] = {"5.0", "10.0", "12.5", "25.0", "50.0"};
+static uint8_t backlight_on = 1;
 
 extern uint32_t _estack;
 extern uint32_t _sidata, _sdata, _edata, _sbss, _ebss;
@@ -631,15 +636,16 @@ static void draw_splash(bool flashing)
 static void format_hz(char *out, uint32_t hz)
 {
     uint32_t mhz = hz / 1000000u;
-    uint32_t khz = (hz / 1000u) % 1000u;
+    uint32_t frac = (hz / 100u) % 10000u;
     out[0] = (char)('0' + (mhz / 100u) % 10);
     out[1] = (char)('0' + (mhz / 10u) % 10);
     out[2] = (char)('0' + mhz % 10u);
     out[3] = '.';
-    out[4] = (char)('0' + (khz / 100u) % 10);
-    out[5] = (char)('0' + (khz / 10u) % 10);
-    out[6] = (char)('0' + khz % 10u);
-    out[7] = 0;
+    out[4] = (char)('0' + (frac / 1000u) % 10);
+    out[5] = (char)('0' + (frac / 100u) % 10);
+    out[6] = (char)('0' + (frac / 10u) % 10);
+    out[7] = (char)('0' + frac % 10u);
+    out[8] = 0;
 }
 
 static void print_vfo(void)
@@ -674,7 +680,6 @@ static void draw_command(bool tx, uint16_t rssi)
         lcd_text1(6, 16, "VFO A / ", COL_WHITE, COL_BG);
         lcd_text1(54, 16, f, COL_WHITE, COL_BG);
     }
-    lcd_text1(102, 16, "CH --", COL_WHITE, COL_BG);
     lcd_fill_rect(6, 25, 148, 1, COL_GRAY);
 
     lcd_text1(6, 29, tx ? "TRANSMIT" : "FM ANALOG", COL_GRAY, COL_BG);
@@ -684,7 +689,9 @@ static void draw_command(bool tx, uint16_t rssi)
         lcd_text1(30, 56, pa_names[pa_level], COL_WHITE, COL_BG);
         lcd_text1(60, 56, " FM", COL_WHITE, COL_BG);
     } else {
-        lcd_text1(6, 56, "SQL 3 CTCSS OFF PWR ", COL_WHITE, COL_BG);
+        char sql[24] = "SQL 3 CTCSS OFF PWR ";
+        sql[4] = (char)('0' + sq_level);
+        lcd_text1(6, 56, sql, COL_WHITE, COL_BG);
         lcd_text1(132, 56, pa_names[pa_level], COL_WHITE, COL_BG);
     }
 
@@ -695,8 +702,9 @@ static void draw_command(bool tx, uint16_t rssi)
               freq_entry ? "#=SET *=DEL EXIT=CANCEL"
                          : "CONTROL SQUELCH STEP POWER",
               COL_GRAY, COL_BG);
-    lcd_text1(6, 112, "3", COL_WHITE, COL_BG);
-    lcd_text1(48, 112, "12.5", COL_WHITE, COL_BG);
+    char sq[2] = {(char)('0' + sq_level), 0};
+    lcd_text1(6, 112, sq, COL_WHITE, COL_BG);
+    lcd_text1(48, 112, step_names[step_index], COL_WHITE, COL_BG);
     lcd_text1(142, 112, "H", COL_WHITE, COL_BG);
 
 }
@@ -705,7 +713,7 @@ static void draw_vfo_line(void)
 {
     char f[9];
     format_hz(f, vfo_hz);
-    lcd_fill_rect(6, 16, 90, 9, COL_BG);
+    lcd_fill_rect(6, 16, 100, 9, COL_BG);
     lcd_text1(6, 16, "VFO A / ", COL_WHITE, COL_BG);
     lcd_text1(54, 16, f, COL_WHITE, COL_BG);
     lcd_fill_rect(6, 105, 150, 8, COL_BG);
@@ -939,6 +947,38 @@ static void rf_gpio(uint8_t pin, uint8_t high)
     rf_write_reg(0x33, v);
 }
 
+static void squelch_apply(void)
+{
+    /* The FD6818 0x78 threshold does not mute this audio path; keep the chip
+     * open and mute the speaker amp from RSSI instead. */
+    rf_write_reg(0x78, 0);
+}
+
+static uint16_t squelch_threshold(void)
+{
+    /* SQL 0 is fully open. SQL 3 = 34, just above the ~28-30 RSSI noise. */
+    return sq_level ? (uint16_t)(22u + sq_level * 4u) : 0;
+}
+
+static void squelch_update(uint16_t rssi)
+{
+    if (sq_level == 0 || rssi >= squelch_threshold()) {
+        GPIO_BSRR(GPIOC) = (1u << 14);     /* speaker amp on */
+    } else {
+        GPIO_BRR(GPIOC) = (1u << 14);      /* speaker amp off / mute */
+    }
+}
+
+static void backlight_set(uint8_t on)
+{
+    backlight_on = on;
+    if (on) {
+        GPIO_BSRR(GPIOA) = (1u << 4);
+    } else {
+        GPIO_BRR(GPIOA) = (1u << 4);
+    }
+}
+
 static void rf_rx(uint32_t hz)
 {
     if (hz < 300000000u) {
@@ -957,7 +997,7 @@ static void rf_rx(uint32_t hz)
     rf_write_reg(0x30, 0xBFF1);
     rf_write_reg(0x47, 0x6140);        /* AF_OUT_BASE | RX audio */
     rf_write_reg(0x48, 0x83FF);        /* max volume for test */
-    rf_write_reg(0x78, 0x0000);        /* squelch fully open */
+    squelch_apply();
 }
 
 static uint16_t tx_prefix = 0x0004;
@@ -1008,8 +1048,8 @@ static void vfo_set(uint32_t hz, bool tx)
     print_vfo();
 }
 
-static const char *const menu_names[4] = {
-    "FREQUENCY", "POWER", "ABOUT", "EXIT"
+static const char *const menu_names[7] = {
+    "FREQUENCY", "POWER", "SQUELCH", "STEP", "BACKLIGHT", "ABOUT", "EXIT"
 };
 
 static void draw_menu(bool tx)
@@ -1020,10 +1060,10 @@ static void draw_menu(bool tx)
     lcd_text1(6, 20, "SERVICE SETTINGS", COL_GRAY, COL_BG);
     lcd_fill_rect(6, 30, 148, 1, COL_GRAY);
 
-    for (uint8_t i = 0; i < 4; i++) {
-        uint16_t y = (uint16_t)(38 + i * 19);
+    for (uint8_t i = 0; i < 7; i++) {
+        uint16_t y = (uint16_t)(36 + i * 11);
         if (i == menu_index) {
-            lcd_fill_rect(6, (uint16_t)(y - 2), 148, 13, COL_DKGRAY);
+            lcd_fill_rect(6, (uint16_t)(y - 1), 148, 10, COL_DKGRAY);
         }
         uint16_t fg = i == menu_index ? COL_WHITE : COL_GRAY;
         lcd_text1(10, y, menu_names[i], fg, COL_BG);
@@ -1037,6 +1077,17 @@ static void draw_menu(bool tx)
                 value[n] = p[n];
             }
         } else if (i == 2) {
+            value[0] = (char)('0' + sq_level);
+        } else if (i == 3) {
+            const char *p = step_names[step_index];
+            for (uint8_t n = 0; p[n] && n < 8; n++) {
+                value[n] = p[n];
+            }
+        } else if (i == 4) {
+            value[0] = backlight_on ? 'O' : 'O';
+            value[1] = backlight_on ? 'N' : 'F';
+            value[2] = backlight_on ? 0 : 'F';
+        } else if (i == 5) {
             value[0] = 'I'; value[1] = 'N'; value[2] = 'F'; value[3] = 'O';
         } else {
             value[0] = 'C'; value[1] = 'L'; value[2] = 'O';
@@ -1045,8 +1096,8 @@ static void draw_menu(bool tx)
         lcd_text1(104, y, value, fg, COL_BG);
     }
 
-    lcd_fill_rect(6, 108, 148, 1, COL_GRAY);
-    lcd_text1(6, 116, "UP/DOWN MENU=OK EXIT=BACK", COL_GRAY, COL_BG);
+    lcd_fill_rect(6, 112, 148, 1, COL_GRAY);
+    lcd_text1(6, 118, "UP/DOWN MENU=OK EXIT=BACK", COL_GRAY, COL_BG);
 }
 
 static void draw_about(void)
@@ -1104,7 +1155,7 @@ static void menu_key(uint8_t key, bool tx)
         }
         draw_menu(tx);
     } else if (key == 0x13) {
-        if (menu_index < 3) {
+        if (menu_index < 6) {
             menu_index++;
         }
         draw_menu(tx);
@@ -1119,6 +1170,16 @@ static void menu_key(uint8_t key, bool tx)
             tx_pa = pa_targets[pa_level];
             draw_menu(tx);
         } else if (menu_index == 2) {
+            sq_level = (uint8_t)((sq_level + 1) % 10);
+            squelch_update(rf_rssi());
+            draw_menu(tx);
+        } else if (menu_index == 3) {
+            step_index = (uint8_t)((step_index + 1) % 5);
+            draw_menu(tx);
+        } else if (menu_index == 4) {
+            backlight_set(backlight_on ? 0 : 1);
+            draw_menu(tx);
+        } else if (menu_index == 5) {
             menu_screen = 1;
             draw_about();
         } else {
@@ -1189,6 +1250,16 @@ static void handle_key(uint8_t key, bool tx)
         pa_level = (uint8_t)((pa_level + 1) % 3);
         tx_pa = pa_targets[pa_level];
         draw_command(tx, rf_rssi());
+    } else if (key == 0x12) {           /* Up: step VFO */
+        uint32_t step = step_hz[step_index];
+        if (vfo_hz <= 999999000u - step) {
+            vfo_set(vfo_hz + step, tx);
+        }
+    } else if (key == 0x13) {           /* Down: step VFO */
+        uint32_t step = step_hz[step_index];
+        if (vfo_hz >= 100000000u + step) {
+            vfo_set(vfo_hz - step, tx);
+        }
     } else if (key == 0x11) {           /* Menu */
         menu_open(tx);
     }
@@ -1686,6 +1757,7 @@ void main(void)
     pa_level = 0;
     GPIO_BSRR(GPIOC) = (1u << 14);     /* speaker amp enable (confirmed) */
     draw_command(false, rf_rssi());
+    squelch_update(rf_rssi());
 
     uart_puts("RF id=0x");
     uart_hex16(rf_id);
@@ -1727,6 +1799,10 @@ void main(void)
                 uart_dec(battery_pct);
                 uart_puts(" pa=");
                 uart_puts(pa_names[pa_level]);
+                uart_puts(" sql=");
+                uart_dec(sq_level);
+                uart_puts(" amp=");
+                uart_dec((uint8_t)((GPIO_ODR(GPIOC) >> 14) & 1u));
                 uart_puts("\r\n");
             } else if (c == 'K') {
                 key_mask_cmd();
@@ -1756,7 +1832,7 @@ void main(void)
                     draw_command(true, rf_rssi());
                 } else {
                     rf_rx(vfo_hz);
-                    GPIO_BSRR(GPIOC) = (1u << 14);  /* amp on */
+                    squelch_update(rf_rssi());
                     draw_command(false, rf_rssi());
                 }
                 uart_puts(ptt ? "ptt=1\r\n" : "ptt=0\r\n");
@@ -1769,7 +1845,7 @@ void main(void)
             if (!tx_cut && ++tx_ticks >= 600) {
                 tx_cut = 1;
                 rf_rx(vfo_hz);
-                GPIO_BSRR(GPIOC) = (1u << 14);
+                squelch_update(rf_rssi());
                 draw_command(false, rf_rssi());
                 uart_puts("tx timeout\r\n");
             }
@@ -1786,6 +1862,7 @@ void main(void)
         if (!ptt_stable && !menu_active && ++tick % 10 == 0) {
             battery_update();
             uint16_t rssi = rf_rssi();
+            squelch_update(rssi);
             draw_rssi_only(rssi);
             if (tick % 50 == 0) {
                 uart_puts("rssi=");

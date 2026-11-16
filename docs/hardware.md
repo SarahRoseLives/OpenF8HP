@@ -198,7 +198,9 @@ observed the other keys in that row but not `3` itself.
   - `0x47 = 0x6140` (AF out, RX audio state 1)
   - `0x48 = 0x83FF` (max test volume; vendor AF path uses
     `0x800F | (cal << 4)`)
-  - `0x78 = 0x0000` (squelch fully open for the test)
+  - `0x78 = 0x0000` is kept open. The chip's `0x78` threshold did not mute
+  the audio path in testing; firmware squelch now compares RSSI against
+  `22 + 4*level` and mutes speaker amp `PC14` below threshold.
   - AF response from the vendor init: `0x74=0xFEF0`, `0x44=0x8D8F`,
     `0x45=0x3359`
   - `0x7D=0xE952` (mic sensitivity, from the vendor init)

@@ -177,3 +177,9 @@ Chronological record of findings. Newest entries at the bottom.
 - **Menu:** `Menu` opens a service list (Frequency, Power, About, Exit);
   `Up`/`Down` navigate, `Menu` selects, `Exit` backs out. Power cycles PA.
   About credits **Created by Sarah Rose AD8NT**.
+
+- **Menu options:** SQUELCH 0-9 now uses software squelch: RSSI threshold
+  `22 + 4*level` (SQL 0 open; SQL 3 = 34, just above the ~28-30 noise floor);
+  the speaker amp PC14 is muted below threshold. The FD6818 0x78 threshold
+  did not mute this audio path. STEP cycles 5/10/12.5/25/50 kHz and Up/Down
+  tune the VFO; BACKLIGHT toggles PA4. VFO display changed to four decimals.
