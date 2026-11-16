@@ -74,6 +74,11 @@ static uint8_t pa_level;
 static const uint16_t pa_targets[3] = {0x30D7u, 0x48D7u, 0x64D7u};
 static const char *const pa_names[3] = {"LOW", "MID", "HIGH"};
 
+static uint32_t vfo_hz = 446000000u;
+static uint8_t freq_entry;
+static uint8_t freq_digits[6];
+static uint8_t freq_len;
+
 extern uint32_t _estack;
 extern uint32_t _sidata, _sdata, _edata, _sbss, _ebss;
 
@@ -273,6 +278,15 @@ static void uart_init(void)
     USART_CR1 = CR1_UE | CR1_TE | CR1_RE;
 }
 
+static uint8_t uart_getc(char *c)
+{
+    if (USART_SR & SR_RXNE) {
+        *c = (char)USART_DR;
+        return 1;
+    }
+    return 0;
+}
+
 static void uart_putc(char c)
 {
     while (!(USART_SR & SR_TXE)) {
@@ -305,6 +319,24 @@ static void uart_dec(uint16_t v)
     if (v >= 100) uart_putc('0' + (v / 100) % 10);
     if (v >= 10) uart_putc('0' + (v / 10) % 10);
     uart_putc('0' + v % 10);
+}
+
+static int hexval(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static uint8_t uart_getc_timeout(char *c)
+{
+    for (volatile uint32_t i = 0; i < 2000000u; i++) {
+        if (uart_getc(c)) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 /* ---- ST7735 8080 bus ---- */
@@ -591,6 +623,29 @@ static void draw_splash(bool flashing)
     }
 }
 
+static void format_hz(char *out, uint32_t hz)
+{
+    uint32_t mhz = hz / 1000000u;
+    uint32_t khz = (hz / 1000u) % 1000u;
+    out[0] = (char)('0' + (mhz / 100u) % 10);
+    out[1] = (char)('0' + (mhz / 10u) % 10);
+    out[2] = (char)('0' + mhz % 10u);
+    out[3] = '.';
+    out[4] = (char)('0' + (khz / 100u) % 10);
+    out[5] = (char)('0' + (khz / 10u) % 10);
+    out[6] = (char)('0' + khz % 10u);
+    out[7] = 0;
+}
+
+static void print_vfo(void)
+{
+    char f[9];
+    format_hz(f, vfo_hz);
+    uart_puts("vfo=");
+    uart_puts(f);
+    uart_puts("\r\n");
+}
+
 static void draw_command(bool tx, uint16_t rssi)
 {
     lcd_fill_rect(0, 0, LCD_W, LCD_H, COL_BG);
@@ -602,7 +657,18 @@ static void draw_command(bool tx, uint16_t rssi)
     draw_signal(112, 2, rssi);
     draw_battery_status();
 
-    lcd_text1(6, 16, "VFO A / 446.000", COL_WHITE, COL_BG);
+    if (freq_entry) {
+        lcd_text1(6, 16, "ENTRY ", COL_BLUE, COL_BG);
+        for (uint8_t i = 0; i < freq_len; i++) {
+            lcd_char1((uint16_t)(42 + i * 6), 16,
+                      (char)('0' + freq_digits[i]), COL_WHITE, COL_BG);
+        }
+    } else {
+        char f[9];
+        format_hz(f, vfo_hz);
+        lcd_text1(6, 16, "VFO A / ", COL_WHITE, COL_BG);
+        lcd_text1(54, 16, f, COL_WHITE, COL_BG);
+    }
     lcd_text1(102, 16, "CH --", COL_WHITE, COL_BG);
     lcd_fill_rect(6, 25, 148, 1, COL_GRAY);
 
@@ -620,11 +686,43 @@ static void draw_command(bool tx, uint16_t rssi)
     lcd_fill_rect(6, 92, 148, 1, COL_GRAY);
     lcd_text1(6, 96, tx ? "ON AIR" : "READY", COL_WHITE, COL_BG);
     lcd_rssi_text(104, 96, rssi);
-    lcd_text1(6, 105, "CONTROL SQUELCH STEP POWER", COL_GRAY, COL_BG);
+    lcd_text1(6, 105,
+              freq_entry ? "#=SET *=DEL EXIT=CANCEL"
+                         : "CONTROL SQUELCH STEP POWER",
+              COL_GRAY, COL_BG);
     lcd_text1(6, 112, "3", COL_WHITE, COL_BG);
     lcd_text1(48, 112, "12.5", COL_WHITE, COL_BG);
     lcd_text1(142, 112, "H", COL_WHITE, COL_BG);
 
+}
+
+static void draw_vfo_line(void)
+{
+    char f[9];
+    format_hz(f, vfo_hz);
+    lcd_fill_rect(6, 16, 90, 9, COL_BG);
+    lcd_text1(6, 16, "VFO A / ", COL_WHITE, COL_BG);
+    lcd_text1(54, 16, f, COL_WHITE, COL_BG);
+    lcd_fill_rect(6, 105, 150, 8, COL_BG);
+    lcd_text1(6, 105, "CONTROL SQUELCH STEP POWER", COL_GRAY, COL_BG);
+}
+
+static void draw_entry_digits(void)
+{
+    lcd_fill_rect(42, 16, 36, 8, COL_BG);
+    for (uint8_t i = 0; i < freq_len; i++) {
+        lcd_char1((uint16_t)(42 + i * 6), 16,
+                  (char)('0' + freq_digits[i]), COL_WHITE, COL_BG);
+    }
+}
+
+static void draw_entry_start(void)
+{
+    lcd_fill_rect(6, 16, 90, 9, COL_BG);
+    lcd_text1(6, 16, "ENTRY ", COL_BLUE, COL_BG);
+    draw_entry_digits();
+    lcd_fill_rect(6, 105, 150, 8, COL_BG);
+    lcd_text1(6, 105, "#=SET *=DEL EXIT=CANCEL", COL_GRAY, COL_BG);
 }
 
 static void draw_rssi_only(uint16_t rssi)
@@ -870,6 +968,93 @@ static uint16_t tx_2b = 0xC000;
 static uint16_t tx_28 = 0x0A40;
 static uint16_t tx_uhf = 0x0004;   /* GPIO2 default; V09+ use GPIO4 0x0010 */
 static uint16_t tx_48 = 0xBBBF;
+
+static uint16_t rf_rssi(void);
+
+static int key_digit(uint8_t key)
+{
+    switch (key) {
+    case 0x02: return 1;
+    case 0x03: return 2;
+    case 0x04: return 3;
+    case 0x05: return 4;
+    case 0x06: return 5;
+    case 0x07: return 6;
+    case 0x09: return 7;
+    case 0x0A: return 8;
+    case 0x0B: return 9;
+    case 0x0E: return 0;
+    default:   return -1;
+    }
+}
+
+static void vfo_set(uint32_t hz, bool tx)
+{
+    if (hz < 100000000u || hz > 999999000u) {
+        uart_puts("range=100-999\r\n");
+        return;
+    }
+    vfo_hz = hz;
+    freq_entry = 0;
+    if (!tx) {
+        rf_rx(vfo_hz);
+    }
+    draw_vfo_line();
+    print_vfo();
+}
+
+static void handle_key(uint8_t key, bool tx)
+{
+    if (key == 0xFF) {
+        return;
+    }
+
+    int d = key_digit(key);
+    if (freq_entry) {
+        if (d >= 0) {
+            if (freq_len < 6) {
+                freq_digits[freq_len++] = (uint8_t)d;
+            }
+            draw_entry_digits();
+            return;
+        }
+        if (key == 0x0D) {              /* * = backspace */
+            if (freq_len) {
+                freq_len--;
+            }
+            draw_entry_digits();
+            return;
+        }
+        if (key == 0x0F) {              /* # = set */
+            if (freq_len == 6) {
+                uint32_t khz = 0;
+                for (uint8_t i = 0; i < 6; i++) {
+                    khz = khz * 10u + freq_digits[i];
+                }
+                vfo_set(khz * 1000u, tx);
+            } else {
+                uart_puts("need 6 digits\r\n");
+            }
+            return;
+        }
+        if (key == 0x14) {              /* Exit = cancel */
+            freq_entry = 0;
+            draw_vfo_line();
+        }
+        return;
+    }
+
+    if (d >= 0) {
+        freq_entry = 1;
+        freq_len = 1;
+        freq_digits[0] = (uint8_t)d;
+        draw_entry_start();
+    } else if (key == 0x01) {           /* SK1 cycles PA level */
+        pa_level = (uint8_t)((pa_level + 1) % 3);
+        tx_pa = pa_targets[pa_level];
+        draw_command(tx, rf_rssi());
+    }
+}
 
 static void rf_tx(uint32_t hz)
 {
@@ -1173,13 +1358,28 @@ static void set_variant(uint8_t v)
 }
 
 /* ---- keypad ---- */
+/* Virtual buttons injected over the debug UART.  Bit N = key code N.
+ * Codes 0x00-0x15 are the matrix/side/power keys; 0x16 is PTT. */
+#define VKEY_PTT_CODE 0x16u
+#define VKEY_PTT (1u << VKEY_PTT_CODE)
+#define VKEY_MASK ((1u << 23) - 1u)
+static uint32_t vkey_mask;
+
+/* Physical matrix (observed with tools/keytest): rows are PB12, PB8, PB9,
+ * PB10, PB11; columns are PB2..PB5.
+ *   r1: 7 8 9 #
+ *   r2: V/M A/B Band -
+ *   r3: Menu Up Down Exit
+ *   r4: 1 2 3 *
+ *   r5: 4 5 6 0
+ * r0 is the idle/side-key row (SK1, SK2). */
 static const uint8_t key_table[6][4] = {
     {0x01, 0x00, 0xFF, 0xFF},
+    {0x09, 0x0A, 0x0B, 0x0F},
+    {0x08, 0x0C, 0x10, 0xFF},
     {0x11, 0x12, 0x13, 0x14},
-    {0x02, 0x03, 0x04, 0xFF},
-    {0x05, 0x06, 0x07, 0x08},
-    {0x09, 0x0A, 0x0B, 0x0C},
-    {0x0D, 0x0E, 0x0F, 0x10},
+    {0x02, 0x03, 0x04, 0x0D},
+    {0x05, 0x06, 0x07, 0x0E},
 };
 
 static const char *key_name(uint8_t code)
@@ -1187,6 +1387,8 @@ static const char *key_name(uint8_t code)
     switch (code) {
     case 0x00: return "SK2";
     case 0x01: return "SK1";
+    case 0x15: return "Power";
+    case 0x16: return "PTT";
     case 0x02: return "1";
     case 0x03: return "2";
     case 0x04: return "3";
@@ -1241,7 +1443,50 @@ static uint8_t scan_once(void)
         }
     }
     rows_idle();
+
+    for (unsigned code = 0; code <= 0x15; code++) {
+        if (vkey_mask & (1u << code)) {
+            return (uint8_t)code;
+        }
+    }
     return 0xFF;
+}
+
+static void print_keymask(void)
+{
+    uart_puts("keymask=");
+    uart_hex16((uint16_t)(vkey_mask >> 16));
+    uart_hex16((uint16_t)vkey_mask);
+    uart_puts("\r\n");
+}
+
+/* K <hexmask> — set the entire virtual button mask at once. */
+static void key_mask_cmd(void)
+{
+    char ch;
+    uint32_t mask = 0;
+    uint8_t nhex = 0;
+
+    while (uart_getc_timeout(&ch)) {
+        if (ch == ' ' || ch == '\t') {
+            continue;
+        }
+        if (ch == '\r' || ch == '\n') {
+            break;
+        }
+        int v = hexval(ch);
+        if (v < 0) {
+            break;
+        }
+        mask = (mask << 4) | (uint32_t)v;
+        nhex++;
+    }
+    if (nhex) {
+        vkey_mask = mask & VKEY_MASK;
+        print_keymask();
+    } else {
+        print_keymask();
+    }
 }
 
 static void delay_loops(uint32_t n)
@@ -1293,7 +1538,7 @@ void main(void)
         rf_id = rf_read_reg(0x00);
     }
     rf_init(rf_id);
-    rf_rx(446000000u);
+    rf_rx(vfo_hz);
     delay_ms(30);
 
     adc_init();
@@ -1307,7 +1552,8 @@ void main(void)
     uart_puts("RF id=0x");
     uart_hex16(rf_id);
     uart_puts("\r\n");
-    uart_puts("COMMAND UI @446.000; V00 mic; cmds: d/b/r/s/v\r\n");
+    uart_puts("COMMAND UI; V00 mic; cmds: d/b/r/s/v/K/x\r\n");
+    print_vfo();
 
     uint8_t ptt_stable = 0;
     uint8_t ptt_count = 0;
@@ -1317,8 +1563,8 @@ void main(void)
     uint32_t tick = 0;
 
     for (;;) {
-        if (USART_SR & SR_RXNE) {
-            char c = (char)USART_DR;
+        char c;
+        if (uart_getc(&c)) {
             if (c == 'd') {
                 rf_dump();
             } else if (c == 'b') {
@@ -1344,20 +1590,19 @@ void main(void)
                 uart_puts(" pa=");
                 uart_puts(pa_names[pa_level]);
                 uart_puts("\r\n");
+            } else if (c == 'K') {
+                key_mask_cmd();
             }
         }
 
         uint8_t key = scan_once();
         if (key != last_key) {
             last_key = key;
-            if (key == 0x01) {              /* SK1 cycles PA level */
-                pa_level = (uint8_t)((pa_level + 1) % 3);
-                tx_pa = pa_targets[pa_level];
-                draw_command(ptt_stable, rf_rssi());
-            }
+            handle_key(key, ptt_stable);
         }
 
-        uint8_t ptt = (GPIO_IDR(GPIOA) & (1u << 10)) ? 0 : 1;
+        uint8_t ptt = ((GPIO_IDR(GPIOA) & (1u << 10)) ? 0 : 1) |
+                      ((vkey_mask & VKEY_PTT) ? 1 : 0);
         if (ptt != ptt_stable) {
             if (++ptt_count >= 3) {
                 ptt_count = 0;
@@ -1365,11 +1610,12 @@ void main(void)
                 if (ptt) {
                     tx_ticks = 0;
                     tx_cut = 0;
+                    freq_entry = 0;
                     GPIO_BRR(GPIOC) = (1u << 14);   /* speaker amp off */
-                    rf_tx(446000000u);
+                    rf_tx(vfo_hz);
                     draw_command(true, rf_rssi());
                 } else {
-                    rf_rx(446000000u);
+                    rf_rx(vfo_hz);
                     GPIO_BSRR(GPIOC) = (1u << 14);  /* amp on */
                     draw_command(false, rf_rssi());
                 }
@@ -1382,7 +1628,7 @@ void main(void)
         if (ptt_stable) {
             if (!tx_cut && ++tx_ticks >= 600) {
                 tx_cut = 1;
-                rf_rx(446000000u);
+                rf_rx(vfo_hz);
                 GPIO_BSRR(GPIOC) = (1u << 14);
                 draw_command(false, rf_rssi());
                 uart_puts("tx timeout\r\n");

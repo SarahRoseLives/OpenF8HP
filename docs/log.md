@@ -165,3 +165,11 @@ Chronological record of findings. Newest entries at the bottom.
   PD2, PF4/5/7).
 - Identify the exact AT32 part and whether flash RDP is enabled (SWD would
   answer both).
+
+- **VFO:** six-digit keypad entry (`446000` = 446.000 MHz), `*` backspace,
+  `#` set, `Exit` cancel; open range 100.000–999.999 MHz. RX and TX now use
+  `vfo_hz`; the frequency line updates without a full redraw.
+- **Keypad map:** raw row/column test corrected the physical map: PB12=7/8/9/#, PB8=V/M/A/B/Band, PB9=Menu/Up/Down/Exit, PB10=1/2/3/*, PB11=4/5/6/0. The old table had rows wrong, which made number entry unreliable.
+- **Remote buttons:** `K <hexmask>` virtual key mask (bit N = key code N, bit
+  22 PTT, bit 21 power), merged with physical keys. `tools/buttons.py` provides
+  list/tap/down/up/clear/state.

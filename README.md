@@ -38,6 +38,7 @@ See [docs/hardware.md](docs/hardware.md) for the full pin map.
 | `tools/flash_kdhx.py` | Flash a `.kdhx` image through the KDH bootloader |
 | `tools/screencap.py` | Capture the 160×128 LCD over the programming UART |
 | `tools/flash_live.py` | Flash the app over serial via the resident RAM stub |
+| `tools/buttons.py` | Press/release any radio button over the debug UART |
 
 ## Firmware
 
@@ -60,6 +61,7 @@ wordmark-only `OPENF8HP` boot splash and a flashing progress bar.
   - FD6818 RX (`SCN PB0`, `SCK PC5`, `SDA PC4`), 446.000 MHz + RSSI
   - RX audio: AF out/volume/squelch, speaker amp `PC14` high
   - keypad matrix rows `PB8–PB12`, columns `PB2–PB5`
+  - VFO entry **100.000–999.999 MHz** from the keypad
   - PTT `PA10` active low
   - USART1 `PA9` @ 115200 for diagnostics
   - build with `make`, flash with `tools/flash_kdhx.py`

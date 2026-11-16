@@ -12,6 +12,7 @@ Confirmed working on a BF-F8HP Pro (NRF, V0.53):
 - LCD **Command layout**: blue rail, IDLE/TX, `FM ANALOG`,
   `VFO A / 446.000`, large `SIMPLEX`, SQL/CTCSS/PWR, `READY / RSSI`
 - keypad matrix mapped, PTT, backlight
+- **VFO entry 100.000–999.999 MHz**, used for RX and TX
 - TX carrier + 1 kHz tone + **normal mic voice** on 145.100 and 446.000 (V00)
 
 ## Command UI
@@ -45,6 +46,32 @@ menu/memory functions are not wired to this screen yet.
   released.
 - `v` over serial prints `bat raw=… pct=… pa=…`.
 
+## VFO entry
+
+- Type six digits to enter a frequency in kHz; e.g. `446000` = 446.000 MHz.
+- Range is open to **100.000–999.999 MHz**; anything outside shows
+  `100-999` and is ignored.
+- `*` backspaces, `#` sets the frequency, `Exit` cancels entry.
+- On set, the FD6818 is retuned immediately and both RX and PTT use the new
+  `vfo_hz`. Frequencies outside the radio's real lock range are allowed for
+  testing.
+- The VFO line is updated without a full-screen redraw, so entering digits is
+  responsive.
+
+## Remote buttons
+
+`K <8hex mask>` sets the virtual button state; bit N = key code N. Bit 22 is
+PTT, bit 21 is power. The running app merges these with the physical keys.
+
+```sh
+python3 ../../tools/buttons.py list
+python3 ../../tools/buttons.py tap sk1
+python3 ../../tools/buttons.py down ptt; python3 ../../tools/buttons.py up ptt
+python3 ../../tools/buttons.py clear
+```
+
+The host tool sends bytes with a small gap because the app uses a polled UART.
+
 ## Boot splash
 
 - 160×128 4bpp wordmark splash: only `OPENF8HP` (no subtitle, model, or
@@ -76,15 +103,16 @@ menu/memory functions are not wired to this screen yet.
 
 - HSI 8 MHz, USART1 `PA9` TX @ 115200
 - ST7735 8-bit 8080 LCD init, backlight `PA4`
-- FD6818 3-wire init and `446.000 MHz` RX
+- FD6818 3-wire init and VFO RX (default `446.000 MHz`)
 - AF out `0x47=0x6140`, volume `0x48=0x83FF` (max test value),
   squelch `0x78=0` (open)
 - speaker amp **PC14 high**
 - read RSSI (`0x67`) and update the signal bars / RSSI footer
-- keypad matrix mapped (`scan_once` present; not wired to Command yet)
+- keypad matrix mapped; digits/`*`/`#`/`Exit` drive VFO entry
 - PTT `PA10` active low; TX redraws with a red rail
 - UART commands: `d` = register dump, `b` = PA11–PA14 band sweep,
-  `r` = read RSSI, `s` = screen capture, `v` = battery/PA
+  `r` = read RSSI, `s` = screen capture, `v` = battery/PA,
+  `K` = virtual button mask
 
 ## Wiring
 

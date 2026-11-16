@@ -109,31 +109,30 @@ Scan routine: **`0x08009bd8`**. Key table: **flash `0x08016ef0`**.
 
 | Row driven | PB2 | PB3 | PB4 | PB5 |
 | --- | --- | --- | --- | --- |
-| idle (all high) | `0x01` | `0x00` | — | — |
-| PB12 low | `0x11` | `0x12` | `0x13` | `0x14` |
-| PB8 low | `0x02` | `0x03` | `0x04` | — |
-| PB9 low | `0x05` | `0x06` | `0x07` | `0x08` |
-| PB10 low | `0x09` | `0x0a` | `0x0b` | `0x0c` |
-| PB11 low | `0x0d` | `0x0e` | `0x0f` | `0x10` |
+| idle (all high) | `0x01` SK1 | `0x00` SK2 | — | — |
+| PB12 low | `0x09` 7 | `0x0a` 8 | `0x0b` 9 | `0x0f` # |
+| PB8 low | `0x08` V/M | `0x0c` A/B | `0x10` Band | — |
+| PB9 low | `0x11` Menu | `0x12` Up | `0x13` Down | `0x14` Exit |
+| PB10 low | `0x02` 1 | `0x03` 2 | `0x04` 3 | `0x0d` * |
+| PB11 low | `0x05` 4 | `0x06` 5 | `0x07` 6 | `0x0e` 0 |
 
 ### Physical layout
 
-Confirmed by the hello image's UART key test. The matrix shape (one 4-key
-row, one 3-key row, three 4-key rows, two side keys) matches the usual
-Baofeng UV-17Pro-style layout:
+Confirmed with the raw row/column diagnostic (`raw r=N c=M`), not by
+assuming a layout. The actual physical layout is:
 
 ```
-[Menu] [Up]   [Down] [Exit]      <- PB12
-[1]    [2]    [3]    -
-[4]    [5]    [6]    [V/M]       <- PB9
-[7]    [8]    [9]    [A/B]       <- PB10
-[*]    [0]    [#]    [Band]      <- PB11
+[V/M]  [A/B]  [Band] -
+[Menu] [Up]   [Down] [Exit]
+[1]    [2]    [3]    [*]
+[4]    [5]    [6]    [0]
+[7]    [8]    [9]    [#]
 ```
 
 Side keys (confirmed by press test):
 **top = `PB2` = `0x01` (SK1)**, **bottom = `PB3` = `0x00` (SK2)**.
 
-Confirmed by the hello image's UART key test:
+Confirmed with the raw row/column diagnostic:
 
 | Key | Code | Key | Code |
 | --- | --- | --- | --- |
