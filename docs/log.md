@@ -183,3 +183,8 @@ Chronological record of findings. Newest entries at the bottom.
   the speaker amp PC14 is muted below threshold. The FD6818 0x78 threshold
   did not mute this audio path. STEP cycles 5/10/12.5/25/50 kHz and Up/Down
   tune the VFO; BACKLIGHT toggles PA4. VFO display changed to four decimals.
+
+- **CTCSS:** OFF plus the standard 50-tone table (67.0-254.1 Hz) in a
+  submenu. Applies the vendor-style `0x51 = 0x9000 | index`, `0x52 = 0x0292`
+  path for RX/TX; 67.0 reads back as `0x51=0x9001`. The `0x07` tone word is
+  write-only on this chip.

@@ -182,6 +182,8 @@ observed the other keys in that row but not `3` itself.
   **`0x0800fd40`**; bit-bang byte routine **`0x0800f4ec`**.
 - State register `0x30`: RX `0xBFF1`, TX `0xC1FE`, tone `0x0302`,
   TX tone `0xC3FA`.
+- CTCSS: `0x51 = 0x9000 | tone_index`, `0x52 = 0x0292`; tone table is at
+  vendor flash `0x08015e24` (67.0-254.1 Hz in 0.1 Hz units).
 - Frequency registers `0x38` / `0x39`; bandwidth `0x43`
   (wide `0x3028`, narrow `0x4048`).
 - **Confirmed on hardware:** chip ID **`0x4819`** (FD6818);

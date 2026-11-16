@@ -70,6 +70,9 @@ about, and exit; memory/channel functions are not wired yet.
   34, just above the ~28–30 RSSI noise floor; higher levels add 4 per step
   (SQL 9 = 58). The FD6818 `0x78` threshold was not muting this audio path,
   so it is kept open.
+- **CTCSS** — opens an OFF + standard 50-tone submenu (67.0–254.1 Hz).
+  Selecting a tone writes `0x51 = 0x9000 | tone_index` and `0x52 = 0x0292`
+  for RX/TX; the tone table is the one in the vendor firmware.
 - **STEP** — cycles 5.0, 10.0, 12.5, 25.0, 50.0 kHz. Up/Down on the Command
   screen tunes the VFO by this step.
 - **BACKLIGHT** — toggles LCD backlight `PA4`.

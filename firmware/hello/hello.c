@@ -88,6 +88,18 @@ static uint8_t step_index = 2;
 static const uint16_t step_hz[5] = {5000, 10000, 12500, 25000, 50000};
 static const char *const step_names[5] = {"5.0", "10.0", "12.5", "25.0", "50.0"};
 static uint8_t backlight_on = 1;
+static uint8_t ctcss_index;
+static uint8_t ctcss_edit;
+
+/* 0 = off; indexes follow the radio's standard CTCSS table. */
+static const uint16_t ctcss_tenths[51] = {
+    0,
+    670, 693, 719, 744, 770, 797, 825, 854, 885, 915,
+    948, 974, 1000, 1035, 1072, 1109, 1148, 1188, 1230, 1273,
+    1318, 1365, 1413, 1462, 1514, 1567, 1598, 1622, 1655, 1679,
+    1713, 1738, 1773, 1799, 1835, 1862, 1899, 1928, 1966, 1995,
+    2035, 2065, 2107, 2181, 2257, 2291, 2336, 2418, 2503, 2541,
+};
 
 extern uint32_t _estack;
 extern uint32_t _sidata, _sdata, _edata, _sbss, _ebss;
@@ -633,6 +645,31 @@ static void draw_splash(bool flashing)
     }
 }
 
+static void ctcss_format(char *out, uint8_t index)
+{
+    if (!index) {
+        out[0] = 'O'; out[1] = 'F'; out[2] = 'F'; out[3] = 0;
+        return;
+    }
+    uint16_t t = ctcss_tenths[index];
+    uint16_t hz = (uint16_t)(t / 10u);
+    uint8_t frac = (uint8_t)(t % 10u);
+    if (hz >= 100u) {
+        out[0] = (char)('0' + (hz / 100u) % 10);
+        out[1] = (char)('0' + (hz / 10u) % 10);
+        out[2] = (char)('0' + hz % 10u);
+        out[3] = '.';
+        out[4] = (char)('0' + frac);
+        out[5] = 0;
+    } else {
+        out[0] = (char)('0' + hz / 10u);
+        out[1] = (char)('0' + hz % 10u);
+        out[2] = '.';
+        out[3] = (char)('0' + frac);
+        out[4] = 0;
+    }
+}
+
 static void format_hz(char *out, uint32_t hz)
 {
     uint32_t mhz = hz / 1000000u;
@@ -689,9 +726,13 @@ static void draw_command(bool tx, uint16_t rssi)
         lcd_text1(30, 56, pa_names[pa_level], COL_WHITE, COL_BG);
         lcd_text1(60, 56, " FM", COL_WHITE, COL_BG);
     } else {
-        char sql[24] = "SQL 3 CTCSS OFF PWR ";
-        sql[4] = (char)('0' + sq_level);
-        lcd_text1(6, 56, sql, COL_WHITE, COL_BG);
+        char sq[2] = {(char)('0' + sq_level), 0};
+        char ctcss[6];
+        ctcss_format(ctcss, ctcss_index);
+        lcd_text1(6, 56, "SQL ", COL_WHITE, COL_BG);
+        lcd_text1(30, 56, sq, COL_WHITE, COL_BG);
+        lcd_text1(48, 56, "CTCSS ", COL_WHITE, COL_BG);
+        lcd_text1(84, 56, ctcss, COL_WHITE, COL_BG);
         lcd_text1(132, 56, pa_names[pa_level], COL_WHITE, COL_BG);
     }
 
@@ -947,6 +988,23 @@ static void rf_gpio(uint8_t pin, uint8_t high)
     rf_write_reg(0x33, v);
 }
 
+static void ctcss_apply(void)
+{
+    if (!ctcss_index) {
+        rf_write_reg(0x51, 0x0000);
+        rf_write_reg(0x07, 0x0000);
+        rf_write_reg(0x08, 0x0000);
+        rf_write_reg(0x52, 0x028F);
+        return;
+    }
+    uint16_t t = ctcss_tenths[ctcss_index];
+    uint16_t word = (uint16_t)((uint32_t)t * 206489u / 100000u);
+    rf_write_reg(0x51, (uint16_t)(0x9000u | ctcss_index));
+    rf_write_reg(0x07, word);
+    rf_write_reg(0x07, 0x21CD);
+    rf_write_reg(0x52, 0x0292);
+}
+
 static void squelch_apply(void)
 {
     /* The FD6818 0x78 threshold does not mute this audio path; keep the chip
@@ -998,6 +1056,7 @@ static void rf_rx(uint32_t hz)
     rf_write_reg(0x47, 0x6140);        /* AF_OUT_BASE | RX audio */
     rf_write_reg(0x48, 0x83FF);        /* max volume for test */
     squelch_apply();
+    ctcss_apply();
 }
 
 static uint16_t tx_prefix = 0x0004;
@@ -1048,8 +1107,9 @@ static void vfo_set(uint32_t hz, bool tx)
     print_vfo();
 }
 
-static const char *const menu_names[7] = {
-    "FREQUENCY", "POWER", "SQUELCH", "STEP", "BACKLIGHT", "ABOUT", "EXIT"
+static const char *const menu_names[8] = {
+    "FREQUENCY", "POWER", "SQUELCH", "CTCSS", "STEP",
+    "BACKLIGHT", "ABOUT", "EXIT"
 };
 
 static void draw_menu(bool tx)
@@ -1060,8 +1120,8 @@ static void draw_menu(bool tx)
     lcd_text1(6, 20, "SERVICE SETTINGS", COL_GRAY, COL_BG);
     lcd_fill_rect(6, 30, 148, 1, COL_GRAY);
 
-    for (uint8_t i = 0; i < 7; i++) {
-        uint16_t y = (uint16_t)(36 + i * 11);
+    for (uint8_t i = 0; i < 8; i++) {
+        uint16_t y = (uint16_t)(34 + i * 10);
         if (i == menu_index) {
             lcd_fill_rect(6, (uint16_t)(y - 1), 148, 10, COL_DKGRAY);
         }
@@ -1079,15 +1139,17 @@ static void draw_menu(bool tx)
         } else if (i == 2) {
             value[0] = (char)('0' + sq_level);
         } else if (i == 3) {
+            ctcss_format(value, ctcss_index);
+        } else if (i == 4) {
             const char *p = step_names[step_index];
             for (uint8_t n = 0; p[n] && n < 8; n++) {
                 value[n] = p[n];
             }
-        } else if (i == 4) {
-            value[0] = backlight_on ? 'O' : 'O';
+        } else if (i == 5) {
+            value[0] = 'O';
             value[1] = backlight_on ? 'N' : 'F';
             value[2] = backlight_on ? 0 : 'F';
-        } else if (i == 5) {
+        } else if (i == 6) {
             value[0] = 'I'; value[1] = 'N'; value[2] = 'F'; value[3] = 'O';
         } else {
             value[0] = 'C'; value[1] = 'L'; value[2] = 'O';
@@ -1129,6 +1191,23 @@ static void draw_about(void)
     lcd_text1(6, 116, "MENU/EXIT=BACK", COL_GRAY, COL_BG);
 }
 
+static void draw_ctcss(void)
+{
+    lcd_fill_rect(0, 0, LCD_W, LCD_H, COL_BG);
+    lcd_fill_rect(0, 0, 2, LCD_H, COL_BLUE);
+    lcd_text(6, 4, "CTCSS", COL_WHITE, COL_BG);
+    lcd_text1(6, 20, "TONE SELECT", COL_GRAY, COL_BG);
+    lcd_fill_rect(6, 30, 148, 1, COL_GRAY);
+
+    char t[6];
+    ctcss_format(t, ctcss_edit);
+    lcd_text1(6, 48, "CURRENT", COL_GRAY, COL_BG);
+    lcd_text(6, 62, t, COL_WHITE, COL_BG);
+    lcd_text1(6, 92, "UP/DOWN SELECT", COL_GRAY, COL_BG);
+    lcd_fill_rect(6, 108, 148, 1, COL_GRAY);
+    lcd_text1(6, 116, "MENU=SET EXIT=BACK", COL_GRAY, COL_BG);
+}
+
 static void menu_open(bool tx)
 {
     menu_active = 1;
@@ -1148,6 +1227,28 @@ static void menu_key(uint8_t key, bool tx)
         }
         return;
     }
+    if (menu_screen == 2) {
+        if (key == 0x12) {
+            if (ctcss_edit < 50) {
+                ctcss_edit++;
+            }
+            draw_ctcss();
+        } else if (key == 0x13) {
+            if (ctcss_edit > 0) {
+                ctcss_edit--;
+            }
+            draw_ctcss();
+        } else if (key == 0x11) {
+            ctcss_index = ctcss_edit;
+            ctcss_apply();
+            menu_screen = 0;
+            draw_menu(tx);
+        } else if (key == 0x14) {
+            menu_screen = 0;
+            draw_menu(tx);
+        }
+        return;
+    }
 
     if (key == 0x12) {
         if (menu_index > 0) {
@@ -1155,7 +1256,7 @@ static void menu_key(uint8_t key, bool tx)
         }
         draw_menu(tx);
     } else if (key == 0x13) {
-        if (menu_index < 6) {
+        if (menu_index < 7) {
             menu_index++;
         }
         draw_menu(tx);
@@ -1174,12 +1275,16 @@ static void menu_key(uint8_t key, bool tx)
             squelch_update(rf_rssi());
             draw_menu(tx);
         } else if (menu_index == 3) {
+            ctcss_edit = ctcss_index;
+            menu_screen = 2;
+            draw_ctcss();
+        } else if (menu_index == 4) {
             step_index = (uint8_t)((step_index + 1) % 5);
             draw_menu(tx);
-        } else if (menu_index == 4) {
+        } else if (menu_index == 5) {
             backlight_set(backlight_on ? 0 : 1);
             draw_menu(tx);
-        } else if (menu_index == 5) {
+        } else if (menu_index == 6) {
             menu_screen = 1;
             draw_about();
         } else {
@@ -1303,6 +1408,8 @@ static void rf_tx(uint32_t hz)
         rf_write_reg(0x28, tx_28);
     }
 
+    ctcss_apply();
+
 #if 0
     /* 1 kHz TX tone: proves the modulator/PA path without the mic */
     uint16_t g = rf_read_reg(0x70);
@@ -1360,7 +1467,7 @@ static void band_set(uint8_t b)
 
 static void rf_dump(void)
 {
-    static const uint8_t regs[] = {0x00, 0x30, 0x37, 0x38, 0x39, 0x43, 0x47, 0x48, 0x67, 0x78};
+    static const uint8_t regs[] = {0x00, 0x07, 0x08, 0x30, 0x37, 0x38, 0x39, 0x43, 0x47, 0x48, 0x51, 0x52, 0x67, 0x78};
     for (unsigned i = 0; i < sizeof(regs); i++) {
         uart_puts("reg");
         uart_hex(regs[i]);
