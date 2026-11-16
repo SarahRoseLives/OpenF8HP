@@ -36,6 +36,7 @@ See [docs/hardware.md](docs/hardware.md) for the full pin map.
 | `tools/kdhx.py` | Decode/encode vendor `.kdhx` firmware containers |
 | `tools/kdh_bootloader.py` | KDH handshake and opcode probe |
 | `tools/flash_kdhx.py` | Flash a `.kdhx` image through the KDH bootloader |
+| `tools/screencap.py` | Capture the 160×128 LCD over the programming UART |
 
 ## Firmware
 
@@ -47,7 +48,9 @@ USART1 output, ST7735 LCD, full keypad map, PTT, and **FD6818 RX at
 The 446 build now uses a P25-inspired **Command** layout on the 160×128 LCD:
 blue rail, IDLE/TX state, `FM ANALOG`, `VFO A / 446.000`, large `SIMPLEX`,
 SQL/CTCSS/PWR, and `READY / RSSI`; the rail turns red in TX. P25 itself is
-not supported — these are FM/analog equivalents.
+not supported — these are FM/analog equivalents. The firmware also has a real
+ADC battery gauge, LOW/MID/HIGH PA levels (SK1), a 60 s TX timeout, and serial
+screen capture via [tools/screencap.py](tools/screencap.py).
 
 - `firmware/hello/` — bring-up image linked at `0x08001000`.
   - ST7735 parallel LCD, backlight `PA4`

@@ -57,10 +57,16 @@ void systick_handler(void);
 #define COL_WHITE  0xFFFFu
 #define COL_YELLOW 0xFFE0u
 #define COL_RED    0xF800u
-#define COL_BLUE   0xC3DFu   /* #2F7BFF, P25-style rail/accent */
-#define COL_GRAY   0x8C64u   /* dim rules/text */
+#define COL_BLUE   0x33DFu   /* #2F7BFF, P25-style rail/accent */
+#define COL_GRAY   0x8CB4u   /* dim rules/text */
 #define COL_DKGRAY 0x3A09u   /* soft-key bar */
 #define COL_IDLE   0x52ACu   /* IDLE state box */
+
+static uint8_t battery_pct = 86;
+static uint16_t battery_raw;
+static uint8_t pa_level;
+static const uint16_t pa_targets[3] = {0x30D7u, 0x48D7u, 0x64D7u};
+static const char *const pa_names[3] = {"LOW", "MID", "HIGH"};
 
 extern uint32_t _estack;
 extern uint32_t _sidata, _sdata, _edata, _sbss, _ebss;
@@ -333,12 +339,55 @@ static void lcd_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
     lcd_data(y1 >> 8); lcd_data(y1 & 0xFF);
 }
 
+
+/* 4bpp shadow of the LCD, for serial screen capture. */
+static uint8_t screen_fb[LCD_W * LCD_H / 2];
+
+static uint8_t color_index(uint16_t c)
+{
+    if (c == COL_BG) return 0;
+    if (c == COL_WHITE) return 1;
+    if (c == COL_BLUE) return 2;
+    if (c == COL_GRAY) return 3;
+    if (c == COL_RED) return 4;
+    if (c == COL_DKGRAY) return 5;
+    if (c == COL_IDLE) return 6;
+    return 1;
+}
+
+static void fb_set_pixel(uint16_t x, uint16_t y, uint16_t color)
+{
+    if (x >= LCD_W || y >= LCD_H) return;
+    uint32_t p = (uint32_t)y * LCD_W + x;
+    uint8_t idx = color_index(color);
+    uint8_t *b = &screen_fb[p >> 1];
+    if (p & 1u) {
+        *b = (uint8_t)((*b & 0x0Fu) | (idx << 4));
+    } else {
+        *b = (uint8_t)((*b & 0xF0u) | idx);
+    }
+}
+
+static void fb_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
+                         uint16_t color)
+{
+    if (!w || !h || x >= LCD_W || y >= LCD_H) return;
+    if (x + w > LCD_W) w = LCD_W - x;
+    if (y + h > LCD_H) h = LCD_H - y;
+    for (uint16_t yy = 0; yy < h; yy++) {
+        for (uint16_t xx = 0; xx < w; xx++) {
+            fb_set_pixel(x + xx, y + yy, color);
+        }
+    }
+}
+
 static void lcd_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
                           uint16_t color)
 {
     if (x >= LCD_W || y >= LCD_H) {
         return;
     }
+    fb_fill_rect(x, y, w, h, color);
     lcd_window(x, y, x + w - 1, y + h - 1);
     lcd_cmd(0x2C);
     uint8_t hi = color >> 8, lo = color & 0xFF;
@@ -353,6 +402,7 @@ static void lcd_pixel(uint16_t x, uint16_t y, uint16_t color)
     if (x >= LCD_W || y >= LCD_H) {
         return;
     }
+    fb_set_pixel(x, y, color);
     lcd_window(x, y, x, y);
     lcd_cmd(0x2C);
     lcd_data(color >> 8);
@@ -489,10 +539,25 @@ static void draw_signal(uint16_t x, uint16_t y, uint16_t rssi)
 
 static void draw_battery(uint16_t x, uint16_t y)
 {
-    lcd_fill_rect(x, y, 13, 6, COL_WHITE);
+    uint16_t fill = (uint16_t)((battery_pct * 11u) / 100u);
+    uint16_t color = battery_pct < 20 ? COL_RED : COL_WHITE;
+    lcd_fill_rect(x, y, 13, 6, color);
     lcd_fill_rect(x + 1, y + 1, 11, 4, COL_BG);
-    lcd_fill_rect(x + 2, y + 2, 8, 2, COL_WHITE);
-    lcd_fill_rect(x + 13, y + 2, 1, 2, COL_WHITE);
+    if (fill) {
+        lcd_fill_rect(x + 1, y + 1, fill, 4, color);
+    }
+    lcd_fill_rect(x + 13, y + 2, 1, 2, color);
+}
+
+static void draw_battery_status(void)
+{
+    char b[3] = {'0', '0', 0};
+    uint8_t pct = battery_pct > 99 ? 99 : battery_pct;
+    b[0] = (char)('0' + pct / 10);
+    b[1] = (char)('0' + pct % 10);
+    lcd_fill_rect(130, 2, 30, 9, COL_BG);
+    draw_battery(132, 3);
+    lcd_text1(147, 3, b, COL_WHITE, COL_BG);
 }
 
 static void draw_command(bool tx, uint16_t rssi)
@@ -503,17 +568,23 @@ static void draw_command(bool tx, uint16_t rssi)
     lcd_fill_rect(6, 2, 30, 11, tx ? COL_RED : COL_IDLE);
     lcd_text1(9, 4, tx ? "TX" : "IDLE", COL_WHITE, tx ? COL_RED : COL_IDLE);
     lcd_text1(42, 4, "FM ANALOG", COL_BLUE, COL_BG);
-    draw_signal(124, 2, rssi);
-    draw_battery(143, 3);
+    draw_signal(112, 2, rssi);
+    draw_battery_status();
 
     lcd_text1(6, 16, "VFO A / 446.000", COL_WHITE, COL_BG);
-    lcd_text1(96, 16, "CH --", COL_WHITE, COL_BG);
+    lcd_text1(102, 16, "CH --", COL_WHITE, COL_BG);
     lcd_fill_rect(6, 25, 148, 1, COL_GRAY);
 
     lcd_text1(6, 29, tx ? "TRANSMIT" : "FM ANALOG", COL_GRAY, COL_BG);
     lcd_text(6, 38, tx ? "MIC" : "SIMPLEX", COL_WHITE, COL_BG);
-    lcd_text1(6, 56, tx ? "PWR HIGH FM" : "SQL 3 CTCSS OFF PWR H",
-              COL_WHITE, COL_BG);
+    if (tx) {
+        lcd_text1(6, 56, "PWR ", COL_WHITE, COL_BG);
+        lcd_text1(30, 56, pa_names[pa_level], COL_WHITE, COL_BG);
+        lcd_text1(60, 56, " FM", COL_WHITE, COL_BG);
+    } else {
+        lcd_text1(6, 56, "SQL 3 CTCSS OFF PWR ", COL_WHITE, COL_BG);
+        lcd_text1(132, 56, pa_names[pa_level], COL_WHITE, COL_BG);
+    }
 
     lcd_fill_rect(6, 92, 148, 1, COL_GRAY);
     lcd_text1(6, 96, tx ? "ON AIR" : "READY", COL_WHITE, COL_BG);
@@ -527,10 +598,41 @@ static void draw_command(bool tx, uint16_t rssi)
 
 static void draw_rssi_only(uint16_t rssi)
 {
-    lcd_fill_rect(124, 2, 16, 8, COL_BG);
-    draw_signal(124, 2, rssi);
+    lcd_fill_rect(112, 2, 18, 8, COL_BG);
+    draw_signal(112, 2, rssi);
+    draw_battery_status();
     lcd_fill_rect(104, 96, 55, 8, COL_BG);
     lcd_rssi_text(104, 96, rssi);
+}
+
+static void send_screen(void)
+{
+    /* Header: A5 5A, width, height, bpp. Then RLE pairs: count,value.
+       count 0 terminates. */
+    uart_putc(0xA5);
+    uart_putc(0x5A);
+    uart_putc((char)(LCD_W >> 8));
+    uart_putc((char)(LCD_W & 0xFF));
+    uart_putc((char)(LCD_H >> 8));
+    uart_putc((char)(LCD_H & 0xFF));
+    uart_putc(4);
+
+    uint8_t last = screen_fb[0];
+    uint16_t count = 0;
+    for (uint32_t i = 0; i < sizeof(screen_fb); i++) {
+        if (screen_fb[i] == last && count < 255) {
+            count++;
+        } else {
+            uart_putc((char)count);
+            uart_putc((char)last);
+            last = screen_fb[i];
+            count = 1;
+        }
+    }
+    uart_putc((char)count);
+    uart_putc((char)last);
+    uart_putc(0);
+    uart_putc(0);
 }
 
 static void lcd_init(void)
@@ -946,6 +1048,18 @@ static uint16_t adc_read(uint8_t ch)
     return v;
 }
 
+static void battery_update(void)
+{
+    battery_raw = adc_read(1);
+    if (battery_raw <= 48) {
+        battery_pct = 0;
+    } else if (battery_raw >= 70) {
+        battery_pct = 100;
+    } else {
+        battery_pct = (uint8_t)((battery_raw - 48) * 100u / 22u);
+    }
+}
+
 static void show_adc(uint8_t ch, uint16_t v)
 {
     char b[8] = {'A', '0', ' ', '0', '0', '0', '0', 0};
@@ -1135,17 +1249,24 @@ void main(void)
     rf_rx(446000000u);
     delay_ms(30);
 
+    adc_init();
+    battery_update();
     set_variant(0);
+    tx_pa = pa_targets[0];
+    pa_level = 0;
     GPIO_BSRR(GPIOC) = (1u << 14);     /* speaker amp enable (confirmed) */
     draw_command(false, rf_rssi());
 
     uart_puts("RF id=0x");
     uart_hex16(rf_id);
     uart_puts("\r\n");
-    uart_puts("COMMAND UI @446.000; V00 mic; cmds: d/b/r\r\n");
+    uart_puts("COMMAND UI @446.000; V00 mic; cmds: d/b/r/s/v\r\n");
 
     uint8_t ptt_stable = 0;
     uint8_t ptt_count = 0;
+    uint8_t last_key = 0xFF;
+    uint16_t tx_ticks = 0;
+    uint8_t tx_cut = 0;
     uint32_t tick = 0;
 
     for (;;) {
@@ -1161,6 +1282,27 @@ void main(void)
                 uart_dec(r);
                 uart_puts("\r\n");
                 draw_rssi_only(r);
+            } else if (c == 's') {
+                send_screen();
+            } else if (c == 'v') {
+                battery_update();
+                uart_puts("bat raw=");
+                uart_dec(battery_raw);
+                uart_puts(" pct=");
+                uart_dec(battery_pct);
+                uart_puts(" pa=");
+                uart_puts(pa_names[pa_level]);
+                uart_puts("\r\n");
+            }
+        }
+
+        uint8_t key = scan_once();
+        if (key != last_key) {
+            last_key = key;
+            if (key == 0x01) {              /* SK1 cycles PA level */
+                pa_level = (uint8_t)((pa_level + 1) % 3);
+                tx_pa = pa_targets[pa_level];
+                draw_command(ptt_stable, rf_rssi());
             }
         }
 
@@ -1170,6 +1312,8 @@ void main(void)
                 ptt_count = 0;
                 ptt_stable = ptt;
                 if (ptt) {
+                    tx_ticks = 0;
+                    tx_cut = 0;
                     GPIO_BRR(GPIOC) = (1u << 14);   /* speaker amp off */
                     rf_tx(446000000u);
                     draw_command(true, rf_rssi());
@@ -1184,9 +1328,23 @@ void main(void)
             ptt_count = 0;
         }
 
+        if (ptt_stable) {
+            if (!tx_cut && ++tx_ticks >= 600) {
+                tx_cut = 1;
+                rf_rx(446000000u);
+                GPIO_BSRR(GPIOC) = (1u << 14);
+                draw_command(false, rf_rssi());
+                uart_puts("tx timeout\r\n");
+            }
+        } else {
+            tx_ticks = 0;
+            tx_cut = 0;
+        }
+
         delay_loops(20);
 
         if (!ptt_stable && ++tick % 10 == 0) {
+            battery_update();
             uint16_t rssi = rf_rssi();
             draw_rssi_only(rssi);
             if (tick % 50 == 0) {

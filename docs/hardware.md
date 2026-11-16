@@ -213,6 +213,13 @@ observed the other keys in that row but not `3` itself.
   audio came from omitting the full mic-path writes and the stale
   `0x40=0x00FF` default.
 
+## Battery and PA
+
+- Battery ADC is channel 1 (PA1); raw 62 maps to about 63% with the initial
+  `48..70` calibration. Low battery turns the icon red.
+- PA targets: LOW `0x30D7`, MID `0x48D7`, HIGH `0x64D7`; SK1 cycles them.
+- 60 s TX timeout; the carrier drops until PTT is released.
+
 ## ST7735 LCD
 
 - **Command UI:** 160×128 P25-inspired layout; 1× 5×7 font for status/footer,

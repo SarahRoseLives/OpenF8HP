@@ -141,6 +141,13 @@ Chronological record of findings. Newest entries at the bottom.
   image is preserved as `work/hello_mic_v00.c`; the 446 voice image as
   `work/hello_446_voice.c`; the TNC source/build is in `work/hello_tnc.c` /
   `work/hello_tnc.kdhx`.
+- **Battery/PA:** ADC channel 1 reads raw 62 → 62/63%; the top icon and
+  percentage are live. `SK1` cycles PA LOW/MID/HIGH (`0x30D7`/`0x48D7`/
+  `0x64D7`), default LOW; 60 s TX timeout. The `48..70` raw range is the
+  initial calibration.
+- **Screen capture:** 4bpp shadow framebuffer + RLE over UART (`s`), decoded
+  by `tools/screencap.py` to BMP; `--stream` repeats. The actual 160×128 UI
+  was captured over the programming cable.
 
 ### Next
 

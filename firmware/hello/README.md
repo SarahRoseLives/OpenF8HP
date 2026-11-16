@@ -33,6 +33,26 @@ P25 trunking, talkgroups, zones, and control channels are not implemented;
 the labels are analog equivalents. The keypad soft labels are visual for now;
 menu/memory functions are not wired to this screen yet.
 
+## Battery and PA
+
+- Battery is read on ADC channel 1; raw 62 currently maps to about 63%.
+  The `48..70` raw range is the initial 0..100% calibration; adjust after a
+  bench-supply sweep.
+- The top icon and the two-digit percentage are live; low battery turns red.
+- `SK1` cycles PA **LOW → MID → HIGH**. Targets are `0x30D7`, `0x48D7`,
+  `0x64D7`; the default is LOW.
+- TX has a 60 s timeout; it drops the carrier and returns to RX until PTT is
+  released.
+- `v` over serial prints `bat raw=… pct=… pa=…`.
+
+## Screen capture
+
+- 4bpp shadow framebuffer; `lcd_fill_rect`/`lcd_pixel` mirror every draw.
+- `s` over serial sends `A5 5A`, width/height, bpp 4, then RLE pairs
+  `count,value`, terminated by `00 00`.
+- `python3 ../../tools/screencap.py --port /dev/ttyUSB0 --out screen.bmp`
+  writes a 160×128 BMP; `--stream --fps 2 --out frames/` repeats.
+
 ## What it does
 
 - HSI 8 MHz, USART1 `PA9` TX @ 115200
@@ -45,7 +65,7 @@ menu/memory functions are not wired to this screen yet.
 - keypad matrix mapped (`scan_once` present; not wired to Command yet)
 - PTT `PA10` active low; TX redraws with a red rail
 - UART commands: `d` = register dump, `b` = PA11–PA14 band sweep,
-  `r` = read RSSI
+  `r` = read RSSI, `s` = screen capture, `v` = battery/PA
 
 ## Wiring
 
