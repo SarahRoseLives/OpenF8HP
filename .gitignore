@@ -1,0 +1,15 @@
+AGENTS.md
+build/
+dist/
+target/
+out/
+node_modules/
+work/
+*.bin
+*.kdhx
+*.zip
+__pycache__/
+*.pyc
+*.elf
+*.map
+*.hex
