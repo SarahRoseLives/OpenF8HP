@@ -5,10 +5,20 @@ CFLAGS  ?= --target=thumbv7m-none-eabi -mcpu=cortex-m4 -mthumb \
 LDFLAGS ?= -Wl,-T,linker.ld -Wl,--gc-sections -Wl,-Map=hello.map
 SIZE    ?= 32768
 
-all: hello.kdhx
+STUB_DIR = ../stub
+STUB_BIN = $(STUB_DIR)/stub.bin
+STUB_BLOB = stub_blob.c
 
-hello.elf: hello.c linker.ld
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ hello.c
+all: $(STUB_BLOB) hello.kdhx
+
+$(STUB_BIN):
+	$(MAKE) -C $(STUB_DIR)
+
+$(STUB_BLOB): $(STUB_BIN) ../../tools/bin2c.py
+	python3 ../../tools/bin2c.py $< $@ stub_blob stub_blob_len
+
+hello.elf: hello.c $(STUB_BLOB) linker.ld
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ hello.c $(STUB_BLOB)
 
 hello.bin: hello.elf
 	llvm-objcopy -O binary $< $@
@@ -20,6 +30,6 @@ hello.kdhx: hello.bin
 	python3 ../../tools/kdhx.py hello.bin hello.kdhx
 
 clean:
-	rm -f hello.elf hello.bin hello.kdhx hello.map
+	rm -f hello.elf hello.bin hello.kdhx hello.map stub_blob.c
 
 .PHONY: all clean

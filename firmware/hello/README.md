@@ -45,6 +45,16 @@ menu/memory functions are not wired to this screen yet.
   released.
 - `v` over serial prints `bat raw=… pct=… pa=…`.
 
+## Live flashing (no update mode)
+
+- The app embeds a 4 KB RAM stub at `0x20004000` (`firmware/stub/`).
+- `x` over serial copies the stub to RAM and jumps.
+- `python3 ../../tools/flash_live.py --port /dev/ttyUSB0 hello.kdhx` sends the
+  app; the stub erases/programs the app region and resets. Works with `.bin`
+  too. The KDH update mode remains recovery.
+- First install the stub-enabled app once via KDH; after that live flashing
+  works.
+
 ## Screen capture
 
 - 4bpp shadow framebuffer; `lcd_fill_rect`/`lcd_pixel` mirror every draw.

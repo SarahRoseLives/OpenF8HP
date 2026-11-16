@@ -13,6 +13,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+extern const uint8_t stub_blob[];
+extern const uint32_t stub_blob_len;
+
 #define REG(a) (*(volatile uint32_t *)(a))
 
 #define CRM_CTRL   REG(0x40021000u)
@@ -1221,6 +1224,20 @@ static void delay_loops(uint32_t n)
     }
 }
 
+static void enter_stub(void)
+{
+    __asm volatile("cpsid i" ::: "memory");
+    volatile uint8_t *dst = (volatile uint8_t *)0x20004000u;
+    for (uint32_t i = 0; i < stub_blob_len; i++) {
+        dst[i] = stub_blob[i];
+    }
+    uint32_t sp = *(volatile uint32_t *)0x20004000u;
+    uint32_t pc = *(volatile uint32_t *)0x20004004u;
+    REG(0xE000ED08u) = 0x20004000u;
+    __asm volatile("msr msp, %0" : : "r"(sp) : "memory");
+    ((void (*)(void))pc)();
+}
+
 void main(void)
 {
     for (uint32_t *src = &_sidata, *dst = &_sdata; dst < &_edata;) {
@@ -1284,6 +1301,9 @@ void main(void)
                 draw_rssi_only(r);
             } else if (c == 's') {
                 send_screen();
+            } else if (c == 'x') {
+                uart_puts("entering RAM stub\r\n");
+                enter_stub();
             } else if (c == 'v') {
                 battery_update();
                 uart_puts("bat raw=");

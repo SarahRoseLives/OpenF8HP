@@ -148,6 +148,11 @@ Chronological record of findings. Newest entries at the bottom.
 - **Screen capture:** 4bpp shadow framebuffer + RLE over UART (`s`), decoded
   by `tools/screencap.py` to BMP; `--stream` repeats. The actual 160×128 UI
   was captured over the programming cable.
+- **Live flashing:** resident 4 KB RAM stub at `0x20004000`, copied by `x`
+  and linked in the app as `stub_blob.c`. The stub erases/programs the app
+  region from RAM (AT32F413 sector size is **1 KB**), then resets.
+  `tools/flash_live.py` sends the raw app; KDH update mode remains recovery.
+  Verified end-to-end over the programming cable.
 
 ### Next
 

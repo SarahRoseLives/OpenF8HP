@@ -13,3 +13,4 @@ __pycache__/
 *.elf
 *.map
 *.hex
+firmware/hello/stub_blob.c
