@@ -84,11 +84,15 @@ static uint16_t battery_raw;
 static uint8_t battery_drawn_pct = 255;
 static uint16_t rssi_drawn = 0xFFFF;
 static uint8_t battery_percent(uint16_t raw);
+static void draw_tx_state(bool tx);
 static uint8_t pa_level;
 static const uint16_t pa_targets[3] = {0x30D7u, 0x48D7u, 0x64D7u};
 static const char *const pa_names[3] = {"LOW", "MID", "HIGH"};
 
 static uint32_t vfo_hz = 446000000u;
+static uint32_t vfo_a_hz = 446000000u;
+static uint32_t vfo_b_hz = 145100000u;
+static uint8_t vfo_active;
 static uint8_t freq_entry;
 static uint8_t freq_digits[6];
 static uint8_t freq_len;
@@ -719,7 +723,7 @@ static void print_vfo(void)
 {
     char f[9];
     format_hz(f, vfo_hz);
-    uart_puts("vfo=");
+    uart_puts(vfo_active ? "vfo=B " : "vfo=A ");
     uart_puts(f);
     uart_puts("\r\n");
 }
@@ -727,10 +731,6 @@ static void print_vfo(void)
 static void draw_command(bool tx, uint16_t rssi)
 {
     lcd_fill_rect(0, 0, LCD_W, LCD_H, COL_BG);
-    lcd_fill_rect(0, 0, 2, LCD_H, tx ? COL_RED : COL_BLUE); /* left rail */
-
-    lcd_fill_rect(6, 2, 30, 11, tx ? COL_RED : COL_IDLE);
-    lcd_text1(9, 4, tx ? "TX" : "IDLE", COL_WHITE, tx ? COL_RED : COL_IDLE);
     lcd_text1(42, 4, "FM ANALOG", COL_BLUE, COL_BG);
     draw_signal(112, 2, rssi);
     battery_drawn_pct = 255;
@@ -746,13 +746,40 @@ static void draw_command(bool tx, uint16_t rssi)
     } else {
         char f[9];
         format_hz(f, vfo_hz);
-        lcd_text1(6, 16, "VFO A / ", COL_WHITE, COL_BG);
+        char vfo_label[9] = "VFO A / ";
+        vfo_label[4] = vfo_active ? 'B' : 'A';
+        lcd_text1(6, 16, vfo_label, COL_WHITE, COL_BG);
         lcd_text1(54, 16, f, COL_WHITE, COL_BG);
     }
     lcd_fill_rect(6, 25, 148, 1, COL_GRAY);
+    lcd_fill_rect(6, 92, 148, 1, COL_GRAY);
+    draw_tx_state(tx);
+    lcd_rssi_text(104, 96, rssi);
+    lcd_text1(6, 105,
+              freq_entry ? "#=SET *=DEL EXIT=CANCEL"
+                         : "CONTROL SQUELCH STEP POWER",
+              COL_GRAY, COL_BG);
+    char sq[2] = {(char)('0' + sq_level), 0};
+    lcd_text1(6, 112, sq, COL_WHITE, COL_BG);
+    lcd_text1(48, 112, step_names[step_index], COL_WHITE, COL_BG);
+    char pw[2] = {(char)(pa_level == 0 ? 'L' : pa_level == 1 ? 'M' : 'H'), 0};
+    lcd_text1(142, 112, pw, COL_WHITE, COL_BG);
 
+}
+
+static void draw_tx_state(bool tx)
+{
+    lcd_fill_rect(0, 0, 2, LCD_H, tx ? COL_RED : COL_BLUE);
+    lcd_fill_rect(6, 2, 30, 11, tx ? COL_RED : COL_IDLE);
+    lcd_text1(9, 4, tx ? "TX" : "IDLE", COL_WHITE, tx ? COL_RED : COL_IDLE);
+
+    lcd_fill_rect(6, 29, 148, 8, COL_BG);
     lcd_text1(6, 29, tx ? "TRANSMIT" : "FM ANALOG", COL_GRAY, COL_BG);
+
+    lcd_fill_rect(6, 38, 100, 16, COL_BG);
     lcd_text(6, 38, tx ? "MIC" : "SIMPLEX", COL_WHITE, COL_BG);
+
+    lcd_fill_rect(6, 56, 148, 8, COL_BG);
     if (tx) {
         lcd_text1(6, 56, "PWR ", COL_WHITE, COL_BG);
         lcd_text1(30, 56, pa_names[pa_level], COL_WHITE, COL_BG);
@@ -768,28 +795,24 @@ static void draw_command(bool tx, uint16_t rssi)
         lcd_text1(132, 56, pa_names[pa_level], COL_WHITE, COL_BG);
     }
 
-    lcd_fill_rect(6, 92, 148, 1, COL_GRAY);
+    lcd_fill_rect(6, 96, 90, 8, COL_BG);
     lcd_text1(6, 96, tx ? "ON AIR" : "READY", COL_WHITE, COL_BG);
-    lcd_rssi_text(104, 96, rssi);
-    lcd_text1(6, 105,
-              freq_entry ? "#=SET *=DEL EXIT=CANCEL"
-                         : "CONTROL SQUELCH STEP POWER",
-              COL_GRAY, COL_BG);
-    char sq[2] = {(char)('0' + sq_level), 0};
-    lcd_text1(6, 112, sq, COL_WHITE, COL_BG);
-    lcd_text1(48, 112, step_names[step_index], COL_WHITE, COL_BG);
-    char pw[2] = {(char)(pa_level == 0 ? 'L' : pa_level == 1 ? 'M' : 'H'), 0};
-    lcd_text1(142, 112, pw, COL_WHITE, COL_BG);
-
 }
 
-static void draw_vfo_line(void)
+static void draw_vfo_line_only(void)
 {
     char f[9];
     format_hz(f, vfo_hz);
     lcd_fill_rect(6, 16, 100, 9, COL_BG);
-    lcd_text1(6, 16, "VFO A / ", COL_WHITE, COL_BG);
+    char vfo_label[9] = "VFO A / ";
+    vfo_label[4] = vfo_active ? 'B' : 'A';
+    lcd_text1(6, 16, vfo_label, COL_WHITE, COL_BG);
     lcd_text1(54, 16, f, COL_WHITE, COL_BG);
+}
+
+static void draw_vfo_line(void)
+{
+    draw_vfo_line_only();
     lcd_fill_rect(6, 105, 150, 8, COL_BG);
     lcd_text1(6, 105, "CONTROL SQUELCH STEP POWER", COL_GRAY, COL_BG);
 }
@@ -1172,11 +1195,30 @@ static void vfo_set(uint32_t hz, bool tx)
         return;
     }
     vfo_hz = hz;
+    if (vfo_active) {
+        vfo_b_hz = hz;
+    } else {
+        vfo_a_hz = hz;
+    }
     freq_entry = 0;
     if (!tx) {
         rf_rx(vfo_hz);
     }
     draw_vfo_line();
+    print_vfo();
+}
+
+static void vfo_switch(bool tx)
+{
+    if (tx) {
+        return;
+    }
+    vfo_active ^= 1u;
+    vfo_hz = vfo_active ? vfo_b_hz : vfo_a_hz;
+    freq_entry = 0;
+    rf_rx(vfo_hz);
+    squelch_update(rf_rssi());
+    draw_vfo_line_only();
     print_vfo();
 }
 
@@ -1443,6 +1485,8 @@ static void handle_key(uint8_t key, bool tx)
         pa_level = (uint8_t)((pa_level + 1) % 3);
         tx_pa = pa_targets[pa_level];
         draw_command(tx, rf_rssi());
+    } else if (key == 0x0C) {           /* A/B: switch VFO */
+        vfo_switch(tx);
     } else if (key == 0x12) {           /* Up: step VFO */
         uint32_t step = step_hz[step_index];
         if (vfo_hz <= 999999000u - step) {
@@ -2031,6 +2075,7 @@ void main(void)
                 ptt_count = 0;
                 ptt_stable = ptt;
                 if (ptt) {
+                    uint8_t from_overlay = menu_active || freq_entry;
                     backlight_activity();
                     tx_ticks = 0;
                     tx_cut = 0;
@@ -2039,11 +2084,15 @@ void main(void)
                     menu_screen = 0;
                     GPIO_BRR(GPIOC) = (1u << 14);   /* speaker amp off */
                     rf_tx(vfo_hz);
-                    draw_command(true, rf_rssi());
+                    if (from_overlay) {
+                        draw_command(true, rf_rssi());
+                    } else {
+                        draw_tx_state(true);
+                    }
                 } else {
                     rf_rx(vfo_hz);
                     squelch_update(rf_rssi());
-                    draw_command(false, rf_rssi());
+                    draw_tx_state(false);
                 }
                 uart_puts(ptt ? "ptt=1\r\n" : "ptt=0\r\n");
             }
@@ -2056,7 +2105,7 @@ void main(void)
                 tx_cut = 1;
                 rf_rx(vfo_hz);
                 squelch_update(rf_rssi());
-                draw_command(false, rf_rssi());
+                draw_tx_state(false);
                 uart_puts("tx timeout\r\n");
             }
         } else {
