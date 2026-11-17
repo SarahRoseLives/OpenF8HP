@@ -1342,7 +1342,8 @@ static void send_aprs_message(void)
 {
     axlen = 0;
     ax25_addr("APRS  ", 0, 0, 0);
-    ax25_addr("AD8NT ", 1, 1, 1);      /* from AD8NT-1 */
+    ax25_addr("AD8NT ", 1, 0, 1);      /* from AD8NT-1 */
+    ax25_addr("WIDE1 ", 1, 1, 0);      /* WIDE1-1 path */
     ax25[axlen++] = 0x03;              /* UI */
     ax25[axlen++] = 0xF0;              /* no layer 3 */
     /* APRS message: :addressee:message */
