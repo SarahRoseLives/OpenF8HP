@@ -40,7 +40,7 @@ about, and exit; memory/channel functions are not wired yet.
   834≈8.4 V. This is the initial 2S calibration; adjust after a bench-supply
   sweep.
 - The top icon and the two-digit percentage are live; low battery turns red.
-- `SK1` cycles PA **LOW → MID → HIGH**. Targets are `0x30D7`, `0x48D7`,
+- `SK1` cycles PA **LOW → MID → HIGH**. Targets are `0x40D7`, `0x48D7`,
   `0x64D7`; the default is LOW.
 - TX has a 60 s timeout; it drops the carrier and returns to RX until PTT is
   released.
@@ -76,6 +76,10 @@ about, and exit; memory/channel functions are not wired yet.
 - **STEP** — cycles 5.0, 10.0, 12.5, 25.0, 50.0 kHz. Up/Down on the Command
   screen tunes the VFO by this step.
 - **BACKLIGHT** — selects 30/60/90/120 s timeout; keys, PTT, or squelch opening wake `PA4`.
+- Settings persist in the last internal-flash sector: VFO A/B and active VFO, PA,
+  squelch, CTCSS, step, and backlight timeout. Writes are debounced by 2 s.
+- **KISS TNC** — toggles the integrated TNC in the background on the active
+  VFO frequency; the radio UI stays normal. **RX needs the PA0 AFOUT hardware tap.**
 - **ABOUT** — VFO, PA, battery, and credits: *Created by Sarah Rose AD8NT*
   (the LCD font is uppercase).
 - **EXIT** — returns to the Command screen.

@@ -220,7 +220,7 @@ observed the other keys in that row but not `3` itself.
 
 - Battery ADC is channel 1 (PA1); calibrated around raw 596≈6.0 V and raw
   834≈8.4 V. Low battery turns the icon red.
-- PA targets: LOW `0x30D7`, MID `0x48D7`, HIGH `0x64D7`; SK1 cycles them.
+- PA targets: LOW `0x40D7`, MID `0x48D7`, HIGH `0x64D7`; SK1 cycles them.
 - 60 s TX timeout; the carrier drops until PTT is released.
 
 ## ST7735 LCD

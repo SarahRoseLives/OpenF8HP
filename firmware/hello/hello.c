@@ -47,12 +47,23 @@ extern const uint32_t stub_blob_len;
 #define CR1_RE (1u << 2)
 #define CR1_TE (1u << 3)
 #define CR1_UE (1u << 13)
+#define CR1_RXNEIE (1u << 5)
 
 #define SYST_CSR REG(0xE000E010u)
 #define SYST_RVR REG(0xE000E014u)
 #define SYST_CVR REG(0xE000E018u)
 #define NVIC_ISER0 REG(0xE000E100u)
+#define NVIC_ISER1 REG(0xE000E104u)
 #define CRM_APB1EN REG(0x4002101Cu)
+#define FLASH_REG_BASE 0x40022000u
+#define FLASH_KEYR REG(FLASH_REG_BASE + 0x04u)
+#define FLASH_STS  REG(FLASH_REG_BASE + 0x0Cu)
+#define FLASH_CTRL REG(FLASH_REG_BASE + 0x10u)
+#define FLASH_ADDR REG(FLASH_REG_BASE + 0x14u)
+#define SETTINGS_ADDR 0x0801F000u
+#define SETTINGS_MAGIC 0x4F463848u
+#define SETTINGS_VERSION 1u
+#define TNC_HZ 145100000u
 #define TMR3_BASE 0x40000400u
 #define TMR3_CTRL1 REG(TMR3_BASE + 0x00u)
 #define TMR3_DIER  REG(TMR3_BASE + 0x0Cu)
@@ -64,6 +75,7 @@ extern const uint32_t stub_blob_len;
 
 void systick_handler(void);
 void TMR3_GLOBAL_IRQHandler(void);
+void USART1_IRQHandler(void);
 
 #define LCD_W 160
 #define LCD_H 128
@@ -86,7 +98,7 @@ static uint16_t rssi_drawn = 0xFFFF;
 static uint8_t battery_percent(uint16_t raw);
 static void draw_tx_state(bool tx);
 static uint8_t pa_level;
-static const uint16_t pa_targets[3] = {0x30D7u, 0x48D7u, 0x64D7u};
+static const uint16_t pa_targets[3] = {0x40D7u, 0x48D7u, 0x64D7u};
 static const char *const pa_names[3] = {"LOW", "MID", "HIGH"};
 
 static uint32_t vfo_hz = 446000000u;
@@ -107,8 +119,18 @@ static const uint16_t step_hz[5] = {5000, 10000, 12500, 25000, 50000};
 static const char *const step_names[5] = {"5.0", "10.0", "12.5", "25.0", "50.0"};
 static uint8_t backlight_on = 1;
 static uint8_t backlight_timeout_idx;
-static volatile uint32_t backlight_remaining_ms;
+static volatile uint32_t backlight_remaining_ticks;
 static uint8_t squelch_was_open;
+static uint8_t settings_dirty;
+static uint16_t settings_idle;
+static volatile uint8_t tnc_enabled;
+static uint8_t tnc_txing;
+static void settings_mark_dirty(void);
+static void settings_save(void);
+static void tnc_sample(uint16_t sample);
+static uint16_t adc_sample0(void);
+static void tnc_rx_reset(void);
+static void tnc_background_poll(void);
 static void backlight_activity(void);
 static uint8_t ctcss_index;
 static uint8_t ctcss_edit;
@@ -169,6 +191,7 @@ const struct vector_table vectors = {
     systick_handler,
     .irq = {
         [29] = TMR3_GLOBAL_IRQHandler,
+        [37] = USART1_IRQHandler,
     },
 };
 
@@ -320,19 +343,37 @@ static void gpio_init(void)
 }
 
 /* ---- UART ---- */
+static volatile uint8_t rx_ring[256];
+static volatile uint8_t rx_head;
+static volatile uint8_t rx_tail;
+
+void USART1_IRQHandler(void)
+{
+    if (USART_SR & SR_RXNE) {
+        uint8_t c = (uint8_t)USART_DR;
+        uint8_t next = (uint8_t)(rx_head + 1u);
+        if (next != rx_tail) {
+            rx_ring[rx_head] = c;
+            rx_head = next;
+        }
+    }
+}
+
 static void uart_init(void)
 {
     USART_BRR = 0x45;
-    USART_CR1 = CR1_UE | CR1_TE | CR1_RE;
+    USART_CR1 = CR1_UE | CR1_TE | CR1_RE | CR1_RXNEIE;
+    NVIC_ISER1 = (1u << 5);            /* USART1 = IRQ 37 */
 }
 
 static uint8_t uart_getc(char *c)
 {
-    if (USART_SR & SR_RXNE) {
-        *c = (char)USART_DR;
-        return 1;
+    if (rx_head == rx_tail) {
+        return 0;
     }
-    return 0;
+    *c = (char)rx_ring[rx_tail];
+    rx_tail = (uint8_t)(rx_tail + 1u);
+    return 1;
 }
 
 static void uart_putc(char c)
@@ -777,7 +818,8 @@ static void draw_tx_state(bool tx)
     lcd_text1(6, 29, tx ? "TRANSMIT" : "FM ANALOG", COL_GRAY, COL_BG);
 
     lcd_fill_rect(6, 38, 100, 16, COL_BG);
-    lcd_text(6, 38, tx ? "MIC" : "SIMPLEX", COL_WHITE, COL_BG);
+    lcd_text(6, 38, tnc_txing ? "TNC" : (tx ? "MIC" : "SIMPLEX"),
+             COL_WHITE, COL_BG);
 
     lcd_fill_rect(6, 56, 148, 8, COL_BG);
     if (tx) {
@@ -968,6 +1010,40 @@ static void rf_write_reg(uint8_t addr, uint16_t val)
     GPIO_BRR(GPIOC) = (1u << 5);         /* SCK low */
 }
 
+static void rf_delay_fast(void)
+{
+    for (volatile unsigned i = 0; i < 5; i++) {
+        __asm volatile("nop");
+    }
+}
+
+static void rf_write_byte_fast(uint8_t v)
+{
+    for (uint8_t m = 0x80; m; m >>= 1) {
+        GPIO_BRR(GPIOC) = (1u << 5);
+        if (v & m) {
+            GPIO_BSRR(GPIOC) = (1u << 4);
+        } else {
+            GPIO_BRR(GPIOC) = (1u << 4);
+        }
+        rf_delay_fast();
+        GPIO_BSRR(GPIOC) = (1u << 5);
+        rf_delay_fast();
+    }
+}
+
+static void rf_write_reg_fast(uint8_t addr, uint16_t val)
+{
+    GPIO_BRR(GPIOB) = (1u << 0);
+    rf_delay_fast();
+    rf_write_byte_fast(addr & 0x7F);
+    rf_write_byte_fast(val >> 8);
+    rf_write_byte_fast(val & 0xFF);
+    GPIO_BSRR(GPIOB) = (1u << 0);
+    rf_delay_fast();
+    GPIO_BRR(GPIOC) = (1u << 5);
+}
+
 static uint16_t rf_read_reg(uint8_t addr)
 {
     GPIO_BRR(GPIOB) = (1u << 0);
@@ -1107,14 +1183,14 @@ static void backlight_set(uint8_t on)
 static void backlight_activity(void)
 {
     backlight_set(1);
-    backlight_remaining_ms = (uint32_t)backlight_seconds() * 1000u;
+    backlight_remaining_ticks = (uint32_t)backlight_seconds() * 9600u;
 }
 
 static void backlight_timer_init(void)
 {
     CRM_APB1EN |= (1u << 1);            /* TMR3 clock */
     TMR3_PSC = 0;
-    TMR3_ARR = 7999;                    /* 8 MHz / 8000 = 1 kHz */
+    TMR3_ARR = 832;                     /* 8 MHz / 833 ≈ 9.6 kHz */
     TMR3_CNT = 0;
     TMR3_DIER = 1;                      /* update interrupt */
     TMR3_EGR = 1;
@@ -1126,8 +1202,11 @@ static void backlight_timer_init(void)
 void TMR3_GLOBAL_IRQHandler(void)
 {
     TMR3_STS = 0;
-    if (backlight_remaining_ms) {
-        if (--backlight_remaining_ms == 0) {
+    if (tnc_enabled) {
+        tnc_sample(adc_sample0());
+    }
+    if (backlight_remaining_ticks) {
+        if (--backlight_remaining_ticks == 0) {
             backlight_set(0);
         }
     }
@@ -1204,6 +1283,7 @@ static void vfo_set(uint32_t hz, bool tx)
     if (!tx) {
         rf_rx(vfo_hz);
     }
+    settings_mark_dirty();
     draw_vfo_line();
     print_vfo();
 }
@@ -1218,71 +1298,84 @@ static void vfo_switch(bool tx)
     freq_entry = 0;
     rf_rx(vfo_hz);
     squelch_update(rf_rssi());
+    settings_mark_dirty();
     draw_vfo_line_only();
     print_vfo();
 }
 
-static const char *const menu_names[8] = {
+static const char *const menu_names[9] = {
     "FREQUENCY", "POWER", "SQUELCH", "CTCSS", "STEP",
-    "BACKLIGHT", "ABOUT", "EXIT"
+    "BACKLIGHT", "KISS TNC", "ABOUT", "EXIT"
 };
+
+static void menu_value(uint8_t i, char *value)
+{
+    value[0] = 0;
+    if (i == 0) {
+        format_hz(value, vfo_hz);
+    } else if (i == 1) {
+        const char *p = pa_names[pa_level];
+        for (uint8_t n = 0; p[n] && n < 8; n++) {
+            value[n] = p[n];
+        }
+    } else if (i == 2) {
+        value[0] = (char)('0' + sq_level);
+    } else if (i == 3) {
+        ctcss_format(value, ctcss_index);
+    } else if (i == 4) {
+        const char *p = step_names[step_index];
+        for (uint8_t n = 0; p[n] && n < 8; n++) {
+            value[n] = p[n];
+        }
+    } else if (i == 5) {
+        uint8_t sec = backlight_seconds();
+        if (sec >= 100) {
+            value[0] = '1';
+            value[1] = (char)('0' + (sec / 10u) % 10u);
+            value[2] = (char)('0' + sec % 10u);
+            value[3] = 's';
+            value[4] = 0;
+        } else {
+            value[0] = (char)('0' + sec / 10u);
+            value[1] = (char)('0' + sec % 10u);
+            value[2] = 's';
+            value[3] = 0;
+        }
+    } else if (i == 6) {
+        value[0] = 'O';
+        value[1] = tnc_enabled ? 'N' : 'F';
+        value[2] = tnc_enabled ? 0 : 'F';
+    } else if (i == 7) {
+        value[0] = 'I'; value[1] = 'N'; value[2] = 'F'; value[3] = 'O'; value[4] = 0;
+    } else {
+        value[0] = 'C'; value[1] = 'L'; value[2] = 'O';
+        value[3] = 'S'; value[4] = 'E'; value[5] = 0;
+    }
+}
+
+static void draw_menu_row(uint8_t i, bool selected)
+{
+    uint16_t y = (uint16_t)(32 + i * 9);
+    uint16_t bg = selected ? COL_DKGRAY : COL_BG;
+    uint16_t fg = selected ? COL_WHITE : COL_GRAY;
+    char value[9];
+    lcd_fill_rect(6, (uint16_t)(y - 1), 148, 9, bg);
+    lcd_text1(10, y, menu_names[i], fg, bg);
+    menu_value(i, value);
+    lcd_text1(104, y, value, fg, bg);
+}
 
 static void draw_menu(bool tx)
 {
+    (void)tx;
     lcd_fill_rect(0, 0, LCD_W, LCD_H, COL_BG);
     lcd_fill_rect(0, 0, 2, LCD_H, COL_BLUE);
     lcd_text(6, 4, "MENU", COL_WHITE, COL_BG);
     lcd_text1(6, 20, "SERVICE SETTINGS", COL_GRAY, COL_BG);
     lcd_fill_rect(6, 30, 148, 1, COL_GRAY);
-
-    for (uint8_t i = 0; i < 8; i++) {
-        uint16_t y = (uint16_t)(34 + i * 10);
-        if (i == menu_index) {
-            lcd_fill_rect(6, (uint16_t)(y - 1), 148, 10, COL_DKGRAY);
-        }
-        uint16_t fg = i == menu_index ? COL_WHITE : COL_GRAY;
-        lcd_text1(10, y, menu_names[i], fg, COL_BG);
-
-        char value[9] = "";
-        if (i == 0) {
-            format_hz(value, vfo_hz);
-        } else if (i == 1) {
-            const char *p = pa_names[pa_level];
-            for (uint8_t n = 0; p[n] && n < 8; n++) {
-                value[n] = p[n];
-            }
-        } else if (i == 2) {
-            value[0] = (char)('0' + sq_level);
-        } else if (i == 3) {
-            ctcss_format(value, ctcss_index);
-        } else if (i == 4) {
-            const char *p = step_names[step_index];
-            for (uint8_t n = 0; p[n] && n < 8; n++) {
-                value[n] = p[n];
-            }
-        } else if (i == 5) {
-            uint8_t sec = backlight_seconds();
-            if (sec >= 100) {
-                value[0] = '1';
-                value[1] = (char)('0' + (sec / 10u) % 10u);
-                value[2] = (char)('0' + sec % 10u);
-                value[3] = 's';
-                value[4] = 0;
-            } else {
-                value[0] = (char)('0' + sec / 10u);
-                value[1] = (char)('0' + sec % 10u);
-                value[2] = 's';
-                value[3] = 0;
-            }
-        } else if (i == 6) {
-            value[0] = 'I'; value[1] = 'N'; value[2] = 'F'; value[3] = 'O';
-        } else {
-            value[0] = 'C'; value[1] = 'L'; value[2] = 'O';
-            value[3] = 'S'; value[4] = 'E';
-        }
-        lcd_text1(104, y, value, fg, COL_BG);
+    for (uint8_t i = 0; i < 9; i++) {
+        draw_menu_row(i, i == menu_index);
     }
-
     lcd_fill_rect(6, 112, 148, 1, COL_GRAY);
     lcd_text1(6, 118, "UP/DOWN MENU=OK EXIT=BACK", COL_GRAY, COL_BG);
 }
@@ -1369,6 +1462,7 @@ static void menu_key(uint8_t key, bool tx)
         } else if (key == 0x11) {
             ctcss_index = ctcss_edit;
             ctcss_apply();
+            settings_mark_dirty();
             menu_screen = 0;
             draw_menu(tx);
         } else if (key == 0x14) {
@@ -1380,14 +1474,16 @@ static void menu_key(uint8_t key, bool tx)
 
     if (key == 0x12) {
         if (menu_index > 0) {
-            menu_index--;
+            uint8_t old = menu_index--;
+            draw_menu_row(old, false);
+            draw_menu_row(menu_index, true);
         }
-        draw_menu(tx);
     } else if (key == 0x13) {
-        if (menu_index < 7) {
-            menu_index++;
+        if (menu_index < 8) {
+            uint8_t old = menu_index++;
+            draw_menu_row(old, false);
+            draw_menu_row(menu_index, true);
         }
-        draw_menu(tx);
     } else if (key == 0x11) {
         if (menu_index == 0) {
             menu_active = 0;
@@ -1397,23 +1493,33 @@ static void menu_key(uint8_t key, bool tx)
         } else if (menu_index == 1) {
             pa_level = (uint8_t)((pa_level + 1) % 3);
             tx_pa = pa_targets[pa_level];
-            draw_menu(tx);
+            settings_mark_dirty();
+            draw_menu_row(menu_index, true);
         } else if (menu_index == 2) {
             sq_level = (uint8_t)((sq_level + 1) % 10);
             squelch_update(rf_rssi());
-            draw_menu(tx);
+            settings_mark_dirty();
+            draw_menu_row(menu_index, true);
         } else if (menu_index == 3) {
             ctcss_edit = ctcss_index;
             menu_screen = 2;
             draw_ctcss();
         } else if (menu_index == 4) {
             step_index = (uint8_t)((step_index + 1) % 5);
-            draw_menu(tx);
+            settings_mark_dirty();
+            draw_menu_row(menu_index, true);
         } else if (menu_index == 5) {
             backlight_timeout_idx = (uint8_t)((backlight_timeout_idx + 1u) & 3u);
             backlight_activity();
-            draw_menu(tx);
+            settings_mark_dirty();
+            draw_menu_row(menu_index, true);
         } else if (menu_index == 6) {
+            tnc_enabled = tnc_enabled ? 0 : 1;
+            tnc_rx_reset();
+            settings_mark_dirty();
+            settings_save();
+            draw_menu_row(menu_index, true);
+        } else if (menu_index == 7) {
             menu_screen = 1;
             draw_about();
         } else {
@@ -1484,6 +1590,7 @@ static void handle_key(uint8_t key, bool tx)
     } else if (key == 0x01) {           /* SK1 cycles PA level */
         pa_level = (uint8_t)((pa_level + 1) % 3);
         tx_pa = pa_targets[pa_level];
+        settings_mark_dirty();
         draw_command(tx, rf_rssi());
     } else if (key == 0x0C) {           /* A/B: switch VFO */
         vfo_switch(tx);
@@ -1562,8 +1669,13 @@ static void rf_tx_tone(uint32_t hz)
     rf_write_reg(0x1A, 0x1F80);
     rf_set_freq(hz);
     rf_write_reg(0x30, 0x0004);
-    rf_gpio(0x8, 1);                   /* VHF TX front-end */
-    rf_gpio(0x10, 0);
+    if (hz < 300000000u) {
+        rf_gpio(0x8, 1);               /* VHF TX front-end */
+        rf_gpio(0x10, 0);
+    } else {
+        rf_gpio(0x8, 0);
+        rf_gpio(0x4, 0);               /* UHF TX front-end */
+    }
     rf_write_reg(0x36, 0x64D7);        /* PA target 100, low gain */
     rf_write_reg(0x51, 0x0000);
     rf_write_reg(0x07, 0x0000);
@@ -1716,6 +1828,26 @@ static uint16_t adc_read(uint8_t ch)
     return v;
 }
 
+static uint16_t adc_sample0(void)
+{
+    ADC_OSQ1 &= ~(0xFu << 20);
+    uint32_t spt = ADC_SPT2;
+    spt &= ~7u;
+    spt |= 1u;
+    ADC_SPT2 = spt;
+    ADC_OSQ3 = 0;
+    uint32_t c2 = ADC_CTRL2;
+    c2 &= ~(7u << 17);
+    c2 |= (7u << 17) | (1u << 20);
+    ADC_CTRL2 = c2;
+    ADC_CTRL2 |= (1u << 22);
+    for (volatile uint32_t i = 0; i < 200 && !(ADC_STS & 2u); i++) {
+    }
+    uint16_t v = ADC_ODT & 0xFFFu;
+    ADC_STS = ~2u;
+    return v;
+}
+
 static uint8_t battery_percent(uint16_t raw)
 {
     /* PA1 battery divider, calibrated for the 2S pack:
@@ -1796,6 +1928,122 @@ static void show_variant(uint8_t v)
     b[3] = '0' + v % 10;
     lcd_fill_rect(38, 104, 7 * 12, 14, COL_BG);
     lcd_text(38, 104, b, COL_WHITE, COL_BG);
+}
+
+typedef struct {
+    uint32_t magic;
+    uint16_t version;
+    uint8_t vfo_active;
+    uint8_t pa_level;
+    uint8_t sq_level;
+    uint8_t ctcss_index;
+    uint8_t step_index;
+    uint8_t backlight_timeout_idx;
+    uint8_t tnc_enabled;
+    uint32_t vfo_a_hz;
+    uint32_t vfo_b_hz;
+    uint32_t checksum;
+} settings_t;
+
+static uint32_t settings_checksum(const settings_t *st)
+{
+    const uint8_t *p = (const uint8_t *)st;
+    uint32_t h = 2166136261u;
+    for (uint32_t i = 0; i < sizeof(settings_t) - sizeof(uint32_t); i++) {
+        h = (h ^ p[i]) * 16777619u;
+    }
+    return h;
+}
+
+static void settings_load(void)
+{
+    const volatile settings_t *st = (const volatile settings_t *)SETTINGS_ADDR;
+    if (st->magic != SETTINGS_MAGIC || st->version != SETTINGS_VERSION) {
+        return;
+    }
+    settings_t copy;
+    uint8_t *d = (uint8_t *)&copy;
+    const volatile uint8_t *s = (const volatile uint8_t *)st;
+    for (uint32_t i = 0; i < sizeof(copy); i++) {
+        d[i] = s[i];
+    }
+    if (settings_checksum(&copy) != copy.checksum) {
+        return;
+    }
+    if (copy.vfo_active > 1 || copy.pa_level > 2 || copy.sq_level > 9 ||
+        copy.ctcss_index > 50 || copy.step_index > 4 ||
+        copy.backlight_timeout_idx > 3 || copy.tnc_enabled > 1 ||
+        copy.vfo_a_hz < 100000000u || copy.vfo_a_hz > 999999000u ||
+        copy.vfo_b_hz < 100000000u || copy.vfo_b_hz > 999999000u) {
+        return;
+    }
+    vfo_active = copy.vfo_active;
+    vfo_a_hz = copy.vfo_a_hz;
+    vfo_b_hz = copy.vfo_b_hz;
+    vfo_hz = vfo_active ? vfo_b_hz : vfo_a_hz;
+    pa_level = copy.pa_level;
+    sq_level = copy.sq_level;
+    ctcss_index = copy.ctcss_index;
+    step_index = copy.step_index;
+    backlight_timeout_idx = copy.backlight_timeout_idx;
+    tnc_enabled = copy.tnc_enabled;
+}
+
+static void settings_mark_dirty(void)
+{
+    settings_dirty = 1;
+    settings_idle = 0;
+}
+
+static uint8_t flash_wait(void)
+{
+    for (uint32_t i = 0; i < 2000000u; i++) {
+        if (!(FLASH_STS & 1u)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void settings_save(void)
+{
+    settings_t st;
+    st.magic = SETTINGS_MAGIC;
+    st.version = SETTINGS_VERSION;
+    st.vfo_active = vfo_active;
+    st.pa_level = pa_level;
+    st.sq_level = sq_level;
+    st.ctcss_index = ctcss_index;
+    st.step_index = step_index;
+    st.backlight_timeout_idx = backlight_timeout_idx;
+    st.tnc_enabled = tnc_enabled;
+    st.vfo_a_hz = vfo_a_hz;
+    st.vfo_b_hz = vfo_b_hz;
+    st.checksum = settings_checksum(&st);
+
+    __asm volatile("cpsid i" ::: "memory");
+    FLASH_KEYR = 0x45670123u;
+    FLASH_KEYR = 0xCDEF89ABu;
+    FLASH_STS = (1u << 5) | (1u << 4) | (1u << 2);
+    FLASH_CTRL |= (1u << 1);            /* sector erase */
+    FLASH_ADDR = SETTINGS_ADDR;
+    FLASH_CTRL |= (1u << 6);            /* start erase */
+    flash_wait();
+    FLASH_CTRL &= ~(1u << 1);
+
+    const uint8_t *p = (const uint8_t *)&st;
+    for (uint32_t i = 0; i < sizeof(st); i += 2) {
+        uint16_t w = (uint16_t)p[i] | ((uint16_t)p[i + 1] << 8);
+        FLASH_CTRL |= (1u << 0);        /* halfword program */
+        *(volatile uint16_t *)(SETTINGS_ADDR + i) = w;
+        flash_wait();
+        FLASH_CTRL &= ~(1u << 0);
+    }
+    FLASH_CTRL |= (1u << 7);            /* lock */
+    FLASH_STS = (1u << 5) | (1u << 4) | (1u << 2);
+    __asm volatile("cpsie i" ::: "memory");
+    settings_dirty = 0;
+    settings_idle = 0;
 }
 
 static void set_variant(uint8_t v)
@@ -1985,6 +2233,7 @@ void main(void)
 
     uart_puts("\r\nOPENF8HP RF hello\r\n");
     uart_puts("USART1 PA9 @115200, LCD ST7735, FD6818, keypad/PTT\r\n");
+    settings_load();
 
     lcd_init();
     lcd_fill_rect(0, 0, LCD_W, LCD_H, COL_BG);
@@ -1999,14 +2248,17 @@ void main(void)
     rf_init(rf_id);
     rf_rx(vfo_hz);
     delay_ms(30);
+    ctcss_apply();
 
     adc_init();
+    if (tnc_enabled) {
+        tnc_rx_reset();
+    }
     battery_update();
     backlight_timer_init();
-    backlight_remaining_ms = (uint32_t)backlight_seconds() * 1000u;
+    backlight_remaining_ticks = (uint32_t)backlight_seconds() * 9600u;
     set_variant(0);
-    tx_pa = pa_targets[0];
-    pa_level = 0;
+    tx_pa = pa_targets[pa_level];
     GPIO_BSRR(GPIOC) = (1u << 14);     /* speaker amp enable (confirmed) */
     draw_command(false, rf_rssi());
     squelch_update(rf_rssi());
@@ -2027,7 +2279,9 @@ void main(void)
 
     for (;;) {
         char c;
-        if (uart_getc(&c)) {
+        if (tnc_enabled) {
+            tnc_background_poll();
+        } else if (uart_getc(&c)) {
             if (c == 'd') {
                 rf_dump();
             } else if (c == 'b') {
@@ -2116,6 +2370,13 @@ void main(void)
         if (menu_lock) {
             menu_lock--;
         }
+        if (settings_dirty) {
+            if (!ptt_stable && !menu_active && ++settings_idle >= 200) {
+                settings_save();
+            }
+        } else {
+            settings_idle = 0;
+        }
         delay_ms(10);
 
         if (!ptt_stable && !menu_active && ++tick % 10 == 0) {
@@ -2143,13 +2404,11 @@ void main(void)
 
 /* ---------------- AFSK 1200 / AX.25 TX ---------------- */
 
-#define TNC_HZ 145100000u
 #define TONE_GAIN 60
 #define TONE1_1200 12389u
 #define TONE2_2200 22714u
 
-static volatile uint8_t afsk_bits[6000];
-static uint8_t raw_bits[6000];
+static uint8_t raw_bits[3072];
 static uint16_t raw_len;
 static volatile uint16_t afsk_len, afsk_pos;
 static volatile uint8_t afsk_active;
@@ -2210,6 +2469,180 @@ static uint16_t crc16_x25(const uint8_t *d, uint16_t n)
     return (uint16_t)~crc;
 }
 
+
+/* ---- TNC RX: PA0 ADC -> AFSK1200 -> HDLC -> KISS ---- */
+#define TNC_RX_PHASES 8
+#define TNC_RX_RAW_BITS 768
+#define TNC_RX_RAW_BYTES (TNC_RX_RAW_BITS / 8)
+#define TNC_RX_FRAME_MAX 330
+
+static const int16_t tnc_cos1200[8] = {4095, 2896, 0, -2896, -4095, -2896, 0, 2896};
+static const int16_t tnc_sin1200[8] = {0, 2896, 4095, 2896, 0, -2896, -4095, -2896};
+static const int16_t tnc_cos2200[8] = {4095, 535, -3955, -1567, 3546, 2493, -2896, -3249};
+static const int16_t tnc_sin2200[8] = {0, 4060, 1060, -3783, -2047, 3249, 2896, -2493};
+
+static uint8_t tnc_raw[TNC_RX_PHASES][TNC_RX_RAW_BYTES];
+static uint16_t tnc_raw_len[TNC_RX_PHASES];
+static uint8_t tnc_sr[TNC_RX_PHASES];
+static uint8_t tnc_prev[TNC_RX_PHASES];
+static uint8_t tnc_have[TNC_RX_PHASES];
+static int16_t tnc_audio[8];
+static uint8_t tnc_audio_pos;
+static uint8_t tnc_audio_n;
+static int32_t tnc_dc;
+static uint32_t tnc_sample_no;
+static volatile uint8_t tnc_rx_ready;
+static volatile uint16_t tnc_rx_len;
+static uint8_t tnc_rx_frame[TNC_RX_FRAME_MAX];
+static uint8_t tnc_rx_tmp[TNC_RX_FRAME_MAX];
+
+static int32_t tnc_abs32(int32_t v)
+{
+    return v < 0 ? -v : v;
+}
+
+static void tnc_process(uint8_t p, uint16_t nbits)
+{
+    uint16_t len = 0;
+    uint8_t byte = 0;
+    uint8_t bc = 0;
+    uint8_t ones = 0;
+    for (uint16_t i = 0; i < nbits; i++) {
+        uint8_t b = (uint8_t)((tnc_raw[p][i >> 3] >> (i & 7)) & 1u);
+        if (ones == 5) {
+            if (b) {
+                return;
+            }
+            ones = 0;
+            continue;
+        }
+        byte |= (uint8_t)(b << bc);
+        bc++;
+        if (bc == 8) {
+            if (len >= sizeof(tnc_rx_tmp)) {
+                return;
+            }
+            tnc_rx_tmp[len++] = byte;
+            byte = 0;
+            bc = 0;
+        }
+        ones = b ? (uint8_t)(ones + 1) : 0;
+    }
+    if (len < 2) {
+        return;
+    }
+    uint16_t fcs = (uint16_t)tnc_rx_tmp[len - 2] |
+                   ((uint16_t)tnc_rx_tmp[len - 1] << 8);
+    if (crc16_x25(tnc_rx_tmp, (uint16_t)(len - 2)) != fcs) {
+        return;
+    }
+    if (tnc_rx_ready) {
+        return;
+    }
+    for (uint16_t i = 0; i < len; i++) {
+        tnc_rx_frame[i] = tnc_rx_tmp[i];
+    }
+    tnc_rx_len = len;
+    tnc_rx_ready = 1;
+    for (uint8_t q = 0; q < TNC_RX_PHASES; q++) {
+        tnc_raw_len[q] = 0;
+        tnc_sr[q] = 0;
+        tnc_have[q] = 0;
+    }
+}
+
+static void tnc_bit(uint8_t p, uint8_t bit)
+{
+    tnc_sr[p] = (uint8_t)((tnc_sr[p] >> 1) | (uint8_t)(bit << 7));
+    if (tnc_raw_len[p] >= TNC_RX_RAW_BITS) {
+        tnc_raw_len[p] = 0;
+        tnc_sr[p] = 0;
+        return;
+    }
+    if ((tnc_raw_len[p] & 7u) == 0) {
+        tnc_raw[p][tnc_raw_len[p] >> 3] = 0;
+    }
+    tnc_raw[p][tnc_raw_len[p] >> 3] |= (uint8_t)(bit << (tnc_raw_len[p] & 7u));
+    tnc_raw_len[p]++;
+    if (tnc_sr[p] == 0x7E) {
+        uint16_t n = tnc_raw_len[p] >= 8 ? (uint16_t)(tnc_raw_len[p] - 8) : 0;
+        if (n >= 16) {
+            tnc_process(p, n);
+        }
+        tnc_raw_len[p] = 0;
+        tnc_sr[p] = 0;
+    }
+}
+
+static void tnc_tone(uint8_t p, uint8_t tone)
+{
+    if (!tnc_have[p]) {
+        tnc_prev[p] = tone;
+        tnc_have[p] = 1;
+        return;
+    }
+    uint8_t b = (tone == tnc_prev[p]) ? 1u : 0u;
+    tnc_prev[p] = tone;
+    tnc_bit(p, b);
+}
+
+void tnc_sample(uint16_t sample)
+{
+    int32_t x = (int32_t)sample - tnc_dc;
+    tnc_dc += x >> 5;
+    tnc_audio[tnc_audio_pos] = (int16_t)x;
+    tnc_audio_pos = (uint8_t)((tnc_audio_pos + 1u) & 7u);
+    if (tnc_audio_n < 8) {
+        tnc_audio_n++;
+        return;
+    }
+    int32_t mi = 0, mq = 0, si = 0, sq = 0;
+    for (uint8_t k = 0; k < 8; k++) {
+        int32_t v = tnc_audio[(tnc_audio_pos + k) & 7u];
+        mi += v * tnc_cos1200[k];
+        mq += v * tnc_sin1200[k];
+        si += v * tnc_cos2200[k];
+        sq += v * tnc_sin2200[k];
+    }
+    int32_t em = tnc_abs32(mi) + tnc_abs32(mq);
+    int32_t es = tnc_abs32(si) + tnc_abs32(sq);
+    uint8_t p = (uint8_t)(tnc_sample_no & 7u);
+    tnc_sample_no++;
+    tnc_tone(p, em >= es ? 1u : 0u);
+}
+
+static void tnc_rx_reset(void)
+{
+    for (uint8_t q = 0; q < TNC_RX_PHASES; q++) {
+        tnc_raw_len[q] = 0;
+        tnc_sr[q] = 0;
+        tnc_have[q] = 0;
+    }
+    tnc_audio_n = 0;
+    tnc_audio_pos = 0;
+    tnc_dc = 2048;
+    tnc_rx_ready = 0;
+}
+
+static void kiss_send_rx(const uint8_t *d, uint16_t n)
+{
+    uart_putc((char)0xC0);
+    uart_putc(0x00);
+    for (uint16_t i = 0; i < n; i++) {
+        uint8_t c = d[i];
+        if (c == 0xC0) {
+            uart_putc(0xDB);
+            uart_putc(0xDC);
+        } else if (c == 0xDB) {
+            uart_putc(0xDB);
+            uart_putc(0xDD);
+        } else {
+            uart_putc((char)c);
+        }
+    }
+    uart_putc((char)0xC0);
+}
+
 void systick_handler(void)
 {
     if (!afsk_active) {
@@ -2217,14 +2650,8 @@ void systick_handler(void)
         return;
     }
     if (afsk_pos < afsk_len) {
-        uint8_t t = afsk_bits[afsk_pos++];
-        uint16_t v = 0x8000u | 0x0080u;      /* both generators on */
-        if (t) {
-            v |= (uint16_t)(TONE_GAIN << 8); /* 1200 Hz */
-        } else {
-            v |= TONE_GAIN;                  /* 2200 Hz */
-        }
-        rf_write_reg(0x70, v);
+        uint8_t t = raw_bits[afsk_pos++];
+        rf_write_reg_fast(0x71, t ? TONE1_1200 : TONE2_2200);
     } else {
         afsk_active = 0;
         SYST_CSR = 0;
@@ -2240,8 +2667,20 @@ static void rf_tx_afsk_prepare(uint32_t hz)
     rf_write_reg(0x1A, 0x1F80);
     rf_set_freq(hz);
     rf_write_reg(0x30, 0x0004);
-    rf_gpio(0x8, 1);                   /* VHF TX front-end */
-    rf_gpio(0x10, 0);
+    if (hz < 300000000u) {
+        rf_gpio(0x8, 1);               /* VHF TX front-end */
+        rf_gpio(0x10, 0);
+    } else {
+        rf_gpio(0x8, 0);
+        rf_gpio(0x4, 1);               /* UHF PA path */
+        rf_gpio(0x10, 0);
+        rf_write_reg(0x52, 0x028F);
+        rf_write_reg(0x7E, tx_afe);
+        rf_write_reg(0x19, tx_agc);
+        rf_write_reg(0x2A, tx_2a);
+        rf_write_reg(0x2B, tx_2b);
+        rf_write_reg(0x28, tx_28);
+    }
     rf_write_reg(0x36, 0x64D7);
     rf_write_reg(0x51, 0x0000);
     rf_write_reg(0x07, 0x0000);
@@ -2250,7 +2689,7 @@ static void rf_tx_afsk_prepare(uint32_t hz)
     rf_write_reg(0x50, 0x3B20);        /* TX unmute */
     rf_write_reg(0x71, TONE1_1200);
     rf_write_reg(0x72, TONE2_2200);
-    rf_write_reg(0x70, 0x8000u | (uint16_t)(TONE_GAIN << 8) | 0x0080u);
+    rf_write_reg(0x70, 0x8000u | (uint16_t)(TONE_GAIN << 8));
     rf_write_reg(0x30, 0xC3FA);        /* tone TX state */
     GPIO_BRR(GPIOC) = (1u << 14);      /* speaker amp off */
 }
@@ -2280,12 +2719,14 @@ static void afsk_send_frame(const uint8_t *frame, uint16_t n)
         if (!raw_bits[i]) {
             tone ^= 1;
         }
-        afsk_bits[i] = tone;
+        raw_bits[i] = tone;
     }
     afsk_len = raw_len;
     afsk_pos = 0;
 
-    rf_tx_afsk_prepare(TNC_HZ);
+    tnc_txing = 1;
+    draw_tx_state(true);
+    rf_tx_afsk_prepare(vfo_hz);
     afsk_active = 1;
     SYST_RVR = 6666;                   /* 8 MHz / 1200 */
     SYST_CVR = 0;
@@ -2295,8 +2736,10 @@ static void afsk_send_frame(const uint8_t *frame, uint16_t n)
     afsk_active = 0;
     SYST_CSR = 0;
     rf_write_reg(0x70, 0x0000);
-    rf_rx(TNC_HZ);
+    rf_rx(vfo_hz);
     GPIO_BSRR(GPIOC) = (1u << 14);
+    tnc_txing = 0;
+    draw_tx_state(false);
 }
 
 static void ax25_addr(const char *call, uint8_t ssid, uint8_t last, uint8_t cbit)
@@ -2349,6 +2792,18 @@ static void kiss_byte(uint8_t c)
     }
     if (kiss_len < sizeof(kiss_buf)) {
         kiss_buf[kiss_len++] = c;
+    }
+}
+
+static void tnc_background_poll(void)
+{
+    char c;
+    while (uart_getc(&c)) {
+        kiss_byte((uint8_t)c);
+    }
+    if (tnc_rx_ready) {
+        kiss_send_rx(tnc_rx_frame, tnc_rx_len);
+        tnc_rx_ready = 0;
     }
 }
 

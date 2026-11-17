@@ -112,9 +112,11 @@ which is git-ignored.
 
 ## Standalone KISS TNC / AFSK receive tap
 
-`firmware/tnc` is a separate image. TX is confirmed. The RX firmware is
-implemented, but **the hardware modification it depends on has not been tested
-on a radio yet**.
+`firmware/tnc` is a separate image. The main Command UI also has a
+**KISS TNC** menu entry that toggles a background TNC on the **currently
+selected VFO frequency**; the normal radio UI stays active. RX still requires
+the PA0/AFOUT hardware tap below. TX is confirmed. The RX firmware is implemented, but **the hardware modification it
+depends on has not been tested on a radio yet**.
 
 ### Hardware status
 
