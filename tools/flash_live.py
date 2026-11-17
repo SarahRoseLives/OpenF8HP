@@ -42,6 +42,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="OpenF8HP RAM-stub flasher")
     ap.add_argument("--port", default="/dev/ttyUSB0")
     ap.add_argument("--baud", type=int, default=115200)
+    ap.add_argument("--tnc", action="store_true",
+                    help="TNC image: enter stub with KISS FEND FF FEND")
     ap.add_argument("image", type=Path)
     args = ap.parse_args()
 
@@ -54,7 +56,7 @@ def main() -> None:
     with serial.Serial(args.port, args.baud, timeout=2.0) as ser:
         time.sleep(0.2)
         ser.reset_input_buffer()
-        ser.write(b"x")
+        ser.write(b"\xC0\xFF\xC0" if args.tnc else b"x")
         ser.flush()
         read_until(ser, b"RFSTUB\n")
         ser.write(b"FLSH" + struct.pack("<II", len(data), crc))

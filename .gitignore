@@ -14,3 +14,4 @@ __pycache__/
 *.map
 *.hex
 firmware/hello/stub_blob.c
+firmware/tnc/stub_blob.c
