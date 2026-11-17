@@ -47,7 +47,9 @@ extern const uint32_t stub_blob_len;
 #define CR1_RXNEIE (1u << 5)
 #define CR1_UE (1u << 13)
 
+#define NVIC_ISER0 REG(0xE000E100u)
 #define NVIC_ISER1 REG(0xE000E104u)
+#define CRM_APB1EN REG(0x4002101Cu)
 
 #define SYST_CSR REG(0xE000E010u)
 #define SYST_RVR REG(0xE000E014u)
@@ -55,6 +57,7 @@ extern const uint32_t stub_blob_len;
 
 void systick_handler(void);
 void USART1_IRQHandler(void);
+void TMR3_GLOBAL_IRQHandler(void);
 
 #define LCD_W 160
 #define LCD_H 128
@@ -109,6 +112,7 @@ const struct vector_table vectors = {
     Default_Handler,
     systick_handler,
     .irq = {
+        [29] = TMR3_GLOBAL_IRQHandler,
         [37] = USART1_IRQHandler,
     },
 };
@@ -892,6 +896,26 @@ static uint16_t adc_read(uint8_t ch)
     return v;
 }
 
+static uint16_t adc_sample0(void)
+{
+    ADC_OSQ1 &= ~(0xFu << 20);
+    uint32_t spt = ADC_SPT2;
+    spt &= ~7u;
+    spt |= 1u;                          /* 7.5 ADC cycles */
+    ADC_SPT2 = spt;
+    ADC_OSQ3 = 0;                       /* PA0 / ADC channel 0 */
+    uint32_t c2 = ADC_CTRL2;
+    c2 &= ~(7u << 17);
+    c2 |= (7u << 17) | (1u << 20);      /* software trigger source */
+    ADC_CTRL2 = c2;
+    ADC_CTRL2 |= (1u << 22);
+    for (volatile uint32_t i = 0; i < 200 && !(ADC_STS & 2u); i++) {
+    }
+    uint16_t v = ADC_ODT & 0xFFFu;
+    ADC_STS = ~2u;
+    return v;
+}
+
 static void show_adc(uint8_t ch, uint16_t v)
 {
     char b[8] = {'A', '0', ' ', '0', '0', '0', '0', 0};
@@ -1242,6 +1266,205 @@ static uint16_t crc16_x25(const uint8_t *d, uint16_t n)
     return (uint16_t)~crc;
 }
 
+
+/* ---- AFSK1200 receive: PA0 ADC -> correlator -> NRZI -> HDLC -> KISS ---- */
+#define RX_PHASES   8
+#define RX_RAW_BITS 768
+#define RX_RAW_BYTES (RX_RAW_BITS / 8)
+#define RX_FRAME_MAX 330
+#define TMR3_BASE 0x40000400u
+#define TMR3_CTRL1 REG(TMR3_BASE + 0x00u)
+#define TMR3_DIER  REG(TMR3_BASE + 0x0Cu)
+#define TMR3_STS   REG(TMR3_BASE + 0x10u)
+#define TMR3_EGR   REG(TMR3_BASE + 0x14u)
+#define TMR3_CNT   REG(TMR3_BASE + 0x24u)
+#define TMR3_PSC   REG(TMR3_BASE + 0x28u)
+#define TMR3_ARR   REG(TMR3_BASE + 0x2Cu)
+
+static const int16_t rx_cos1200[8] = {4095, 2896, 0, -2896, -4095, -2896, 0, 2896};
+static const int16_t rx_sin1200[8] = {0, 2896, 4095, 2896, 0, -2896, -4095, -2896};
+static const int16_t rx_cos2200[8] = {4095, 535, -3955, -1567, 3546, 2493, -2896, -3249};
+static const int16_t rx_sin2200[8] = {0, 4060, 1060, -3783, -2047, 3249, 2896, -2493};
+
+static uint8_t rx_raw[RX_PHASES][RX_RAW_BYTES];
+static uint16_t rx_raw_len[RX_PHASES];
+static uint8_t rx_sr[RX_PHASES];
+static uint8_t rx_prev[RX_PHASES];
+static uint8_t rx_have[RX_PHASES];
+static int16_t rx_audio[8];
+static uint8_t rx_audio_pos;
+static uint8_t rx_audio_n;
+static int32_t rx_dc;
+static uint32_t rx_sample_no;
+static volatile uint8_t rx_ready;
+static volatile uint16_t rx_len;
+static uint8_t rx_frame[RX_FRAME_MAX];
+static uint8_t rx_tmp[RX_FRAME_MAX];
+
+static int32_t rx_abs32(int32_t v)
+{
+    return v < 0 ? -v : v;
+}
+
+static void rx_process(uint8_t p, uint16_t nbits)
+{
+    uint16_t len = 0;
+    uint8_t byte = 0;
+    uint8_t bc = 0;
+    uint8_t ones = 0;
+
+    for (uint16_t i = 0; i < nbits; i++) {
+        uint8_t b = (uint8_t)((rx_raw[p][i >> 3] >> (i & 7)) & 1u);
+        if (ones == 5) {
+            if (b) {
+                return;                 /* invalid stuffed sequence */
+            }
+            ones = 0;                   /* discard stuffed zero */
+            continue;
+        }
+        byte |= (uint8_t)(b << bc);
+        bc++;
+        if (bc == 8) {
+            if (len >= sizeof(rx_tmp)) {
+                return;
+            }
+            rx_tmp[len++] = byte;
+            byte = 0;
+            bc = 0;
+        }
+        ones = b ? (uint8_t)(ones + 1) : 0;
+    }
+
+    if (len < 2) {
+        return;
+    }
+    uint16_t fcs = (uint16_t)rx_tmp[len - 2] |
+                   ((uint16_t)rx_tmp[len - 1] << 8);
+    if (crc16_x25(rx_tmp, (uint16_t)(len - 2)) != fcs) {
+        return;
+    }
+    if (rx_ready) {
+        return;
+    }
+    for (uint16_t i = 0; i < len; i++) {
+        rx_frame[i] = rx_tmp[i];
+    }
+    rx_len = len;
+    rx_ready = 1;
+
+    for (uint8_t q = 0; q < RX_PHASES; q++) {
+        rx_raw_len[q] = 0;
+        rx_sr[q] = 0;
+        rx_have[q] = 0;
+    }
+}
+
+static void rx_bit(uint8_t p, uint8_t bit)
+{
+    rx_sr[p] = (uint8_t)((rx_sr[p] >> 1) | (uint8_t)(bit << 7));
+    if (rx_raw_len[p] >= RX_RAW_BITS) {
+        rx_raw_len[p] = 0;
+        rx_sr[p] = 0;
+        return;
+    }
+    if ((rx_raw_len[p] & 7u) == 0) {
+        rx_raw[p][rx_raw_len[p] >> 3] = 0;
+    }
+    rx_raw[p][rx_raw_len[p] >> 3] |= (uint8_t)(bit << (rx_raw_len[p] & 7u));
+    rx_raw_len[p]++;
+
+    if (rx_sr[p] == 0x7E) {
+        uint16_t n = rx_raw_len[p] >= 8 ? (uint16_t)(rx_raw_len[p] - 8) : 0;
+        if (n >= 16) {
+            rx_process(p, n);
+        }
+        rx_raw_len[p] = 0;
+        rx_sr[p] = 0;
+    }
+}
+
+static void rx_tone(uint8_t p, uint8_t tone)
+{
+    if (!rx_have[p]) {
+        rx_prev[p] = tone;
+        rx_have[p] = 1;
+        return;
+    }
+    uint8_t b = (tone == rx_prev[p]) ? 1u : 0u;
+    rx_prev[p] = tone;
+    rx_bit(p, b);
+}
+
+static void rx_sample(uint16_t sample)
+{
+    int32_t x = (int32_t)sample - rx_dc;
+    rx_dc += x >> 5;
+    rx_audio[rx_audio_pos] = (int16_t)x;
+    rx_audio_pos = (uint8_t)((rx_audio_pos + 1u) & 7u);
+    if (rx_audio_n < 8) {
+        rx_audio_n++;
+        return;
+    }
+
+    int32_t mi = 0, mq = 0, si = 0, sq = 0;
+    for (uint8_t k = 0; k < 8; k++) {
+        int32_t s = rx_audio[(rx_audio_pos + k) & 7u];
+        mi += s * rx_cos1200[k];
+        mq += s * rx_sin1200[k];
+        si += s * rx_cos2200[k];
+        sq += s * rx_sin2200[k];
+    }
+    int32_t em = rx_abs32(mi) + rx_abs32(mq);
+    int32_t es = rx_abs32(si) + rx_abs32(sq);
+    uint8_t p = (uint8_t)(rx_sample_no & 7u);
+    rx_sample_no++;
+    rx_tone(p, em >= es ? 1u : 0u);
+}
+
+void TMR3_GLOBAL_IRQHandler(void)
+{
+    TMR3_STS = 0;
+    rx_sample(adc_sample0());
+}
+
+static void rx_init(void)
+{
+    adc_init();
+    rx_dc = 2048;
+    rx_audio_n = 0;
+    rx_audio_pos = 0;
+    rx_sample_no = 0;
+
+    CRM_APB1EN |= (1u << 1);            /* TMR3 clock */
+    TMR3_PSC = 0;
+    TMR3_ARR = 832;                     /* 8 MHz / 9600 ≈ 833 */
+    TMR3_CNT = 0;
+    TMR3_DIER = 1;                      /* update interrupt */
+    TMR3_EGR = 1;                       /* load PSC/ARR */
+    TMR3_STS = 0;
+    TMR3_CTRL1 = 1;                     /* enable */
+    NVIC_ISER0 = (1u << 29);            /* TMR3_GLOBAL_IRQn */
+}
+
+static void kiss_send_rx(const uint8_t *d, uint16_t n)
+{
+    uart_putc((char)0xC0);
+    uart_putc(0x00);
+    for (uint16_t i = 0; i < n; i++) {
+        uint8_t c = d[i];
+        if (c == 0xC0) {
+            uart_putc(0xDB);
+            uart_putc(0xDC);
+        } else if (c == 0xDB) {
+            uart_putc(0xDB);
+            uart_putc(0xDD);
+        } else {
+            uart_putc((char)c);
+        }
+    }
+    uart_putc((char)0xC0);
+}
+
 void systick_handler(void)
 {
     if (!afsk_active) {
@@ -1423,17 +1646,18 @@ void main(void)
     }
     rf_init(id);
     rf_rx(TNC_HZ);
+    rx_init();
     GPIO_BSRR(GPIOC) = (1u << 14);
 
     lcd_text(38, 10, "145.100", COL_WHITE, COL_BG);
     lcd_text(38, 32, "KISS TNC", COL_WHITE, COL_BG);
-    lcd_text(38, 54, "TX ONLY", COL_YELLOW, COL_BG);
+    lcd_text(38, 54, "TX/RX TAP", COL_YELLOW, COL_BG);
     lcd_text(8, 70, "TO AD8NT-5", COL_YELLOW, COL_BG);
     lcd_text(8, 88, "FROM AD8NT-1", COL_YELLOW, COL_BG);
     lcd_text(38, 106, "RX", COL_WHITE, COL_BG);
 
-    uart_puts("\r\nOpenF8HP KISS TNC TX (145.100, AFSK 1200)\r\n");
-    uart_puts("KISS @115200; press a key = APRS msg AD8NT-1 -> AD8NT-5\r\n");
+    uart_puts("\r\nOpenF8HP KISS TNC (145.100, AFSK 1200)\r\n");
+    uart_puts("TX ready; RX uses PA0 tap (hardware mod)\r\n");
 
     __asm volatile("cpsie i" ::: "memory");
 
@@ -1444,6 +1668,10 @@ void main(void)
         char ch;
         while (uart_getc(&ch)) {
             kiss_byte((uint8_t)ch);
+        }
+        if (rx_ready) {
+            kiss_send_rx(rx_frame, rx_len);
+            rx_ready = 0;
         }
         uint8_t key = scan_once();
         if (key != last_key) {

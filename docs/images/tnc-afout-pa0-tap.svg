@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="860" viewBox="0 0 1400 860">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#c00000"/>
+    </marker>
+    <style>
+      .bg { fill:#ffffff; }
+      .box { fill:#f7f9fc; stroke:#22313f; stroke-width:2; rx:10; }
+      .wire { stroke:#22313f; stroke-width:3; fill:none; stroke-linecap:round; }
+      .tap { stroke:#c00000; stroke-width:4; fill:none; stroke-linecap:round; }
+      .gnd { stroke:#22313f; stroke-width:3; fill:none; stroke-linecap:round; }
+      .comp { fill:#ffffff; stroke:#1668b3; stroke-width:3; }
+      .title { font:700 30px 'DejaVu Sans',sans-serif; fill:#17202a; }
+      .sub { font:400 17px 'DejaVu Sans',sans-serif; fill:#3d4b59; }
+      .lbl { font:600 16px 'DejaVu Sans',sans-serif; fill:#17202a; }
+      .small { font:400 14px 'DejaVu Sans',sans-serif; fill:#3d4b59; }
+      .pin { font:700 16px 'DejaVu Sans',sans-serif; fill:#1668b3; }
+      .red { fill:#c00000; }
+      .note { font:400 15px 'DejaVu Sans',sans-serif; fill:#3d4b59; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1400" height="860"/>
+  <text class="title" x="55" y="50">Receive-audio tap: FD6818 AFOUT → AT32 PA0</text>
+  <text class="sub" x="55" y="78">One analog sample wire; the AFSK demodulator, HDLC and KISS output stay in firmware.</text>
+
+  <!-- main schematic -->
+  <rect class="box" x="55" y="135" width="250" height="230"/>
+  <text class="lbl" x="80" y="169">FD6818</text>
+  <text class="small" x="80" y="193">RF / FM / audio</text>
+  <text class="small" x="80" y="216">AFOUT = the audio that</text>
+  <text class="small" x="80" y="239">feeds the speaker amp</text>
+  <text class="pin" x="193" y="337">AFOUT</text>
+  <circle cx="305" cy="350" r="5" fill="#c00000"/>
+
+  <!-- AFOUT to cap -->
+  <path class="tap" d="M305 350 H395"/>
+  <text class="small red" x="315" y="333">new wire</text>
+
+  <!-- C1 -->
+  <path class="wire" d="M395 350 H425"/>
+  <path class="wire" d="M425 315 V385"/>
+  <path class="wire" d="M450 315 V385"/>
+  <path class="wire" d="M450 350 H500"/>
+  <text class="lbl" x="405" y="405">C1 100 nF</text>
+  <text class="small" x="398" y="426">16 V, non-polar</text>
+
+  <!-- node -->
+  <circle cx="515" cy="350" r="7" fill="#c00000"/>
+  <path class="tap" d="M515 350 H600"/>
+
+  <!-- R1 to 3.3 V -->
+  <path class="wire" d="M515 350 V250"/>
+  <rect class="comp" x="496" y="205" width="38" height="80" rx="4"/>
+  <path class="wire" d="M515 205 V150"/>
+  <path class="wire" d="M495 150 H535"/>
+  <text class="pin" x="545" y="145">+3.3 V</text>
+  <text class="lbl" x="540" y="235">R1 10 kΩ</text>
+
+  <!-- R2 to GND -->
+  <path class="wire" d="M515 350 V430"/>
+  <rect class="comp" x="496" y="430" width="38" height="80" rx="4"/>
+  <path class="wire" d="M515 510 V550"/>
+  <path class="gnd" d="M485 550 H545"/>
+  <path class="gnd" d="M495 560 H535"/>
+  <path class="gnd" d="M505 570 H525"/>
+  <text class="lbl" x="540" y="475">R2 10 kΩ</text>
+  <text class="small" x="540" y="497">bias = 1.65 V</text>
+
+  <!-- R3 series -->
+  <path class="wire" d="M600 350 H655"/>
+  <rect class="comp" x="655" y="331" width="80" height="38" rx="4"/>
+  <path class="tap" d="M735 350 H805"/>
+  <text class="lbl" x="655" y="315">R3 1 kΩ</text>
+  <text class="small" x="655" y="400">series protection</text>
+
+  <!-- optional C2 -->
+  <circle cx="775" cy="350" r="5" fill="#22313f"/>
+  <path class="wire" d="M775 350 V430"/>
+  <path class="wire" d="M760 430 H790"/>
+  <path class="wire" d="M760 445 H790"/>
+  <path class="wire" d="M775 445 V475"/>
+  <path class="gnd" d="M750 475 H800"/>
+  <path class="gnd" d="M760 485 H790"/>
+  <path class="gnd" d="M770 495 H780"/>
+  <text class="lbl" x="805" y="435">C2 100 pF</text>
+  <text class="small" x="805" y="456">optional RF filter</text>
+
+  <!-- AT32 -->
+  <rect class="box" x="830" y="135" width="280" height="230"/>
+  <text class="lbl" x="855" y="169">AT32F413</text>
+  <text class="small" x="855" y="193">Cortex-M4F</text>
+  <text class="small" x="855" y="216">ADC1_IN0</text>
+  <text class="pin" x="855" y="337">PA0</text>
+  <circle cx="805" cy="350" r="5" fill="#c00000"/>
+
+  <!-- arrow labels -->
+  <path class="tap" d="M600 390 H735" marker-end="url(#arrow)"/>
+  <text class="small red" x="600" y="382">AFSK audio</text>
+
+  <!-- existing speaker path -->
+  <rect class="box" x="55" y="585" width="1055" height="150"/>
+  <text class="lbl" x="80" y="620">Existing radio audio path</text>
+  <text class="small" x="80" y="646">FD6818 AFOUT ──► speaker-amp input ──► speaker</text>
+  <text class="note" x="80" y="674">Tap the AFOUT side (or the amplifier input), NOT the speaker output: the speaker node is high-current and not ADC-safe.</text>
+  <text class="note" x="80" y="700">If AFOUT is hard to reach, the speaker-amp input is the same audio signal; verify with AC-coupled scope or a small speaker/earpiece.</text>
+
+  <!-- notes -->
+  <rect class="box" x="1140" y="135" width="220" height="600"/>
+  <text class="lbl" x="1160" y="170">Checklist</text>
+  <text class="note" x="1160" y="205">1. Radio OFF.</text>
+  <text class="note" x="1160" y="233">2. Find AFOUT at</text>
+  <text class="note" x="1160" y="254">   FD6818, or at</text>
+  <text class="note" x="1160" y="275">   speaker-amp input.</text>
+  <text class="note" x="1160" y="310">3. Confirm signal</text>
+  <text class="note" x="1160" y="331">   while receiving.</text>
+  <text class="note" x="1160" y="366">4. Solder C1, R1,</text>
+  <text class="note" x="1160" y="387">   R2, R3 as shown.</text>
+  <text class="note" x="1160" y="422">5. Ground to radio</text>
+  <text class="note" x="1160" y="443">   ground, not USB.</text>
+  <text class="note" x="1160" y="478">6. PA0 is ADC</text>
+  <text class="note" x="1160" y="499">   channel 0.</text>
+  <text class="note" x="1160" y="534">7. Keep wiring away</text>
+  <text class="note" x="1160" y="555">   from PA/LCD/RF.</text>
+  <text class="note" x="1160" y="590">8. Insulate and</text>
+  <text class="note" x="1160" y="611">   strain-relieve.</text>
+  <text class="note red" x="1160" y="655">Do not connect</text>
+  <text class="note red" x="1160" y="676">3.3 V directly to</text>
+  <text class="note red" x="1160" y="697">AFOUT or PA0.</text>
+
+  <!-- footer -->
+  <text class="small" x="55" y="790">Values: C1 100 nF; R1/R2 10 kΩ 1%; R3 1 kΩ; C2 100 pF optional. Bias node sits at ~1.65 V.</text>
+  <text class="small" x="55" y="814">Firmware: sample PA0 at 9.6 kHz, detect 1200/2200 Hz AFSK, recover bit clock, HDLC-decode, then emit KISS.</text>
+  <text class="small" x="55" y="838">Schematic is not to scale. AFOUT is an analog line-level node; never tap the speaker output directly into an ADC.</text>
+</svg>

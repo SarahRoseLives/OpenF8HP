@@ -101,9 +101,63 @@ wordmark-only `OPENF8HP` boot splash and a flashing progress bar.
   - USART1 `PA9` @ 115200 for diagnostics
   - build with `make`, flash with `tools/flash_kdhx.py`
   See [firmware/hello/README.md](firmware/hello/README.md).
+- `firmware/tnc/` — standalone KISS TNC image.
+  - AFSK1200 TX on 145.100 MHz, APRS path and KISS at 115200
+  - AFSK1200 RX firmware built around the PA0 hardware tap below
+  - RX: PA0 ADC → 1200/2200 Hz correlator → NRZI → HDLC/FCS → KISS
+  - See [Standalone KISS TNC / AFSK receive tap](#standalone-kiss-tnc--afsk-receive-tap).
 
 Backups, decoded firmware and extracted vendor files live under `work/`,
 which is git-ignored.
+
+## Standalone KISS TNC / AFSK receive tap
+
+`firmware/tnc` is a separate image. TX is confirmed. The RX firmware is
+implemented, but **the hardware modification it depends on has not been tested
+on a radio yet**.
+
+### Hardware status
+
+Without the modification, **AFSK RX decoding is not possible on this radio**.
+The FM-demodulated receive audio only reaches the speaker amplifier; it is not
+routed to any AT32 ADC pin. The FD6818 FSK block is not an AFSK/AX.25 decoder.
+The TNC firmware samples PA0 at 9.6 kHz and performs all AFSK1200, NRZI, HDLC,
+FCS and KISS work in software.
+
+### One-wire tap
+
+Tap the FD6818 **AFOUT** side of the speaker-amplifier input — never the
+speaker output:
+
+![FD6818 AFOUT to AT32 PA0 tap](docs/images/tnc-afout-pa0-tap.png)
+
+```
+FD6818 AFOUT ── C1 100nF ──●── R3 1k ──●── PA0 (ADC1_IN0)
+                            │           │
+                           R1 10k      C2 100pF optional
+                            │           │
+                          +3.3V        GND
+                            │
+                           R2 10k
+                            │
+                           GND
+```
+
+- `C1` 100 nF, `R1`/`R2` 10 kΩ 1%, `R3` 1 kΩ, optional `C2` 100 pF.
+- The bias node sits at about 1.65 V.
+- Ground to radio ground, not USB ground.
+- Do not connect 3.3 V directly to AFOUT or PA0.
+
+### Build / flash
+
+```sh
+make -C firmware/tnc
+python3 tools/flash_live.py --tnc --port /dev/ttyUSB0 firmware/tnc/tnc.kdhx
+```
+
+The image advertises **TX/RX TAP** on the LCD. With no tap, PA0 is flat and
+no RX frames are produced. The KISS host receives decoded AX.25 frames as
+normal KISS data.
 
 ## Quick start
 
