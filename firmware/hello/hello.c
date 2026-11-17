@@ -70,6 +70,9 @@ void systick_handler(void);
 
 static uint8_t battery_pct = 86;
 static uint16_t battery_raw;
+static uint8_t battery_drawn_pct = 255;
+static uint16_t rssi_drawn = 0xFFFF;
+static uint8_t battery_percent(uint16_t raw);
 static uint8_t pa_level;
 static const uint16_t pa_targets[3] = {0x30D7u, 0x48D7u, 0x64D7u};
 static const char *const pa_names[3] = {"LOW", "MID", "HIGH"};
@@ -614,7 +617,15 @@ static void draw_battery(uint16_t x, uint16_t y)
 static void draw_battery_status(void)
 {
     char b[3] = {'0', '0', 0};
-    uint8_t pct = battery_pct > 99 ? 99 : battery_pct;
+    uint8_t pct = battery_percent(battery_raw);
+    if (pct > 99) {
+        pct = 99;
+    }
+    if (pct == battery_drawn_pct) {
+        return;
+    }
+    battery_drawn_pct = pct;
+    battery_pct = pct;
     b[0] = (char)('0' + pct / 10);
     b[1] = (char)('0' + pct % 10);
     lcd_fill_rect(130, 2, 30, 9, COL_BG);
@@ -703,7 +714,9 @@ static void draw_command(bool tx, uint16_t rssi)
     lcd_text1(9, 4, tx ? "TX" : "IDLE", COL_WHITE, tx ? COL_RED : COL_IDLE);
     lcd_text1(42, 4, "FM ANALOG", COL_BLUE, COL_BG);
     draw_signal(112, 2, rssi);
+    battery_drawn_pct = 255;
     draw_battery_status();
+    rssi_drawn = rssi;
 
     if (freq_entry) {
         lcd_text1(6, 16, "ENTRY ", COL_BLUE, COL_BG);
@@ -746,7 +759,8 @@ static void draw_command(bool tx, uint16_t rssi)
     char sq[2] = {(char)('0' + sq_level), 0};
     lcd_text1(6, 112, sq, COL_WHITE, COL_BG);
     lcd_text1(48, 112, step_names[step_index], COL_WHITE, COL_BG);
-    lcd_text1(142, 112, "H", COL_WHITE, COL_BG);
+    char pw[2] = {(char)(pa_level == 0 ? 'L' : pa_level == 1 ? 'M' : 'H'), 0};
+    lcd_text1(142, 112, pw, COL_WHITE, COL_BG);
 
 }
 
@@ -783,7 +797,6 @@ static void draw_rssi_only(uint16_t rssi)
 {
     lcd_fill_rect(112, 2, 18, 8, COL_BG);
     draw_signal(112, 2, rssi);
-    draw_battery_status();
     lcd_fill_rect(104, 96, 55, 8, COL_BG);
     lcd_rssi_text(104, 96, rssi);
 }
@@ -1171,7 +1184,10 @@ static void draw_about(void)
     char f[9];
     format_hz(f, vfo_hz);
     char b[3] = {'0', '0', 0};
-    uint8_t pct = battery_pct > 99 ? 99 : battery_pct;
+    uint8_t pct = battery_percent(battery_raw);
+    if (pct > 99) {
+        pct = 99;
+    }
     b[0] = (char)('0' + pct / 10);
     b[1] = (char)('0' + pct % 10);
 
@@ -1572,7 +1588,11 @@ static uint16_t adc_read(uint8_t ch)
     }
     ADC_SPT2 = spt;
     ADC_OSQ3 = ch;
-    ADC_CTRL2 |= (1u << 20) | (1u << 22);
+    uint32_t c2 = ADC_CTRL2;
+    c2 &= ~(7u << 17);
+    c2 |= (7u << 17) | (1u << 20);      /* software trigger source */
+    ADC_CTRL2 = c2;
+    ADC_CTRL2 |= (1u << 22);
     for (volatile uint32_t i = 0; i < 20000 && !(ADC_STS & 2u); i++) {
     }
     uint16_t v = ADC_ODT & 0xFFFu;
@@ -1580,16 +1600,23 @@ static uint16_t adc_read(uint8_t ch)
     return v;
 }
 
+static uint8_t battery_percent(uint16_t raw)
+{
+    /* PA1 battery divider, calibrated for the 2S pack:
+     * ~596 raw = 6.0 V empty, ~834 raw = 8.4 V full. */
+    if (raw <= 596) {
+        return 0;
+    }
+    if (raw >= 834) {
+        return 100;
+    }
+    return (uint8_t)((raw - 596) * 100u / 238u);
+}
+
 static void battery_update(void)
 {
     battery_raw = adc_read(1);
-    if (battery_raw <= 48) {
-        battery_pct = 0;
-    } else if (battery_raw >= 70) {
-        battery_pct = 100;
-    } else {
-        battery_pct = (uint8_t)((battery_raw - 48) * 100u / 22u);
-    }
+    battery_pct = battery_percent(battery_raw);
 }
 
 static void show_adc(uint8_t ch, uint16_t v)
@@ -1903,7 +1930,7 @@ void main(void)
                 uart_puts("bat raw=");
                 uart_dec(battery_raw);
                 uart_puts(" pct=");
-                uart_dec(battery_pct);
+                uart_dec(battery_percent(battery_raw));
                 uart_puts(" pa=");
                 uart_puts(pa_names[pa_level]);
                 uart_puts(" sql=");
@@ -1967,11 +1994,19 @@ void main(void)
         delay_loops(20);
 
         if (!ptt_stable && !menu_active && ++tick % 10 == 0) {
-            battery_update();
             uint16_t rssi = rf_rssi();
             squelch_update(rssi);
-            draw_rssi_only(rssi);
             if (tick % 50 == 0) {
+                battery_update();
+                draw_battery_status();
+                int16_t delta = (int16_t)rssi - (int16_t)rssi_drawn;
+                if (delta < 0) {
+                    delta = (int16_t)-delta;
+                }
+                if (rssi_drawn == 0xFFFF || delta >= 2) {
+                    draw_rssi_only(rssi);
+                    rssi_drawn = rssi;
+                }
                 uart_puts("rssi=");
                 uart_dec(rssi);
                 uart_puts("\r\n");

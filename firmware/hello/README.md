@@ -36,9 +36,9 @@ about, and exit; memory/channel functions are not wired yet.
 
 ## Battery and PA
 
-- Battery is read on ADC channel 1; raw 62 currently maps to about 63%.
-  The `48..70` raw range is the initial 0..100% calibration; adjust after a
-  bench-supply sweep.
+- Battery is read on ADC channel 1; calibrated around raw 596≈6.0 V and raw
+  834≈8.4 V. This is the initial 2S calibration; adjust after a bench-supply
+  sweep.
 - The top icon and the two-digit percentage are live; low battery turns red.
 - `SK1` cycles PA **LOW → MID → HIGH**. Targets are `0x30D7`, `0x48D7`,
   `0x64D7`; the default is LOW.
