@@ -75,7 +75,7 @@ about, and exit; memory/channel functions are not wired yet.
   for RX/TX; the tone table is the one in the vendor firmware.
 - **STEP** — cycles 5.0, 10.0, 12.5, 25.0, 50.0 kHz. Up/Down on the Command
   screen tunes the VFO by this step.
-- **BACKLIGHT** — toggles LCD backlight `PA4`.
+- **BACKLIGHT** — selects 30/60/90/120 s timeout; keys, PTT, or squelch opening wake `PA4`.
 - **ABOUT** — VFO, PA, battery, and credits: *Created by Sarah Rose AD8NT*
   (the LCD font is uppercase).
 - **EXIT** — returns to the Command screen.

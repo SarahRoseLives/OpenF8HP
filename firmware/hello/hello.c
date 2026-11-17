@@ -51,8 +51,19 @@ extern const uint32_t stub_blob_len;
 #define SYST_CSR REG(0xE000E010u)
 #define SYST_RVR REG(0xE000E014u)
 #define SYST_CVR REG(0xE000E018u)
+#define NVIC_ISER0 REG(0xE000E100u)
+#define CRM_APB1EN REG(0x4002101Cu)
+#define TMR3_BASE 0x40000400u
+#define TMR3_CTRL1 REG(TMR3_BASE + 0x00u)
+#define TMR3_DIER  REG(TMR3_BASE + 0x0Cu)
+#define TMR3_STS   REG(TMR3_BASE + 0x10u)
+#define TMR3_EGR   REG(TMR3_BASE + 0x14u)
+#define TMR3_CNT   REG(TMR3_BASE + 0x24u)
+#define TMR3_PSC   REG(TMR3_BASE + 0x28u)
+#define TMR3_ARR   REG(TMR3_BASE + 0x2Cu)
 
 void systick_handler(void);
+void TMR3_GLOBAL_IRQHandler(void);
 
 #define LCD_W 160
 #define LCD_H 128
@@ -91,6 +102,10 @@ static uint8_t step_index = 2;
 static const uint16_t step_hz[5] = {5000, 10000, 12500, 25000, 50000};
 static const char *const step_names[5] = {"5.0", "10.0", "12.5", "25.0", "50.0"};
 static uint8_t backlight_on = 1;
+static uint8_t backlight_timeout_idx;
+static volatile uint32_t backlight_remaining_ms;
+static uint8_t squelch_was_open;
+static void backlight_activity(void);
 static uint8_t ctcss_index;
 static uint8_t ctcss_edit;
 
@@ -130,6 +145,7 @@ struct vector_table {
     vec_fn reserved4;
     vec_fn pendsv;
     vec_fn systick;
+    vec_fn irq[38];
 };
 
 __attribute__((section(".vectors"), used))
@@ -147,6 +163,9 @@ const struct vector_table vectors = {
     0,
     Default_Handler,
     systick_handler,
+    .irq = {
+        [29] = TMR3_GLOBAL_IRQHandler,
+    },
 };
 
 __attribute__((naked, noreturn))
@@ -1033,11 +1052,23 @@ static uint16_t squelch_threshold(void)
 
 static void squelch_update(uint16_t rssi)
 {
-    if (sq_level == 0 || rssi >= squelch_threshold()) {
+    uint8_t open = (sq_level == 0 || rssi >= squelch_threshold());
+    if (open && !squelch_was_open) {
+        backlight_activity();
+    }
+    squelch_was_open = open;
+    if (open) {
         GPIO_BSRR(GPIOC) = (1u << 14);     /* speaker amp on */
     } else {
         GPIO_BRR(GPIOC) = (1u << 14);      /* speaker amp off / mute */
     }
+}
+
+static const uint8_t backlight_seconds_tab[4] = {30, 60, 90, 120};
+
+static uint8_t backlight_seconds(void)
+{
+    return backlight_seconds_tab[backlight_timeout_idx & 3u];
 }
 
 static void backlight_set(uint8_t on)
@@ -1047,6 +1078,35 @@ static void backlight_set(uint8_t on)
         GPIO_BSRR(GPIOA) = (1u << 4);
     } else {
         GPIO_BRR(GPIOA) = (1u << 4);
+    }
+}
+
+static void backlight_activity(void)
+{
+    backlight_set(1);
+    backlight_remaining_ms = (uint32_t)backlight_seconds() * 1000u;
+}
+
+static void backlight_timer_init(void)
+{
+    CRM_APB1EN |= (1u << 1);            /* TMR3 clock */
+    TMR3_PSC = 0;
+    TMR3_ARR = 7999;                    /* 8 MHz / 8000 = 1 kHz */
+    TMR3_CNT = 0;
+    TMR3_DIER = 1;                      /* update interrupt */
+    TMR3_EGR = 1;
+    TMR3_STS = 0;
+    TMR3_CTRL1 = 1;
+    NVIC_ISER0 = (1u << 29);            /* TMR3_GLOBAL_IRQn */
+}
+
+void TMR3_GLOBAL_IRQHandler(void)
+{
+    TMR3_STS = 0;
+    if (backlight_remaining_ms) {
+        if (--backlight_remaining_ms == 0) {
+            backlight_set(0);
+        }
     }
 }
 
@@ -1159,9 +1219,19 @@ static void draw_menu(bool tx)
                 value[n] = p[n];
             }
         } else if (i == 5) {
-            value[0] = 'O';
-            value[1] = backlight_on ? 'N' : 'F';
-            value[2] = backlight_on ? 0 : 'F';
+            uint8_t sec = backlight_seconds();
+            if (sec >= 100) {
+                value[0] = '1';
+                value[1] = (char)('0' + (sec / 10u) % 10u);
+                value[2] = (char)('0' + sec % 10u);
+                value[3] = 's';
+                value[4] = 0;
+            } else {
+                value[0] = (char)('0' + sec / 10u);
+                value[1] = (char)('0' + sec % 10u);
+                value[2] = 's';
+                value[3] = 0;
+            }
         } else if (i == 6) {
             value[0] = 'I'; value[1] = 'N'; value[2] = 'F'; value[3] = 'O';
         } else {
@@ -1298,7 +1368,8 @@ static void menu_key(uint8_t key, bool tx)
             step_index = (uint8_t)((step_index + 1) % 5);
             draw_menu(tx);
         } else if (menu_index == 5) {
-            backlight_set(backlight_on ? 0 : 1);
+            backlight_timeout_idx = (uint8_t)((backlight_timeout_idx + 1u) & 3u);
+            backlight_activity();
             draw_menu(tx);
         } else if (menu_index == 6) {
             menu_screen = 1;
@@ -1319,6 +1390,7 @@ static void handle_key(uint8_t key, bool tx)
         menu_latch = 0;
         return;
     }
+    backlight_activity();
     if (menu_active) {
         if (menu_latch || menu_lock) {
             return;
@@ -1886,6 +1958,8 @@ void main(void)
 
     adc_init();
     battery_update();
+    backlight_timer_init();
+    backlight_remaining_ms = (uint32_t)backlight_seconds() * 1000u;
     set_variant(0);
     tx_pa = pa_targets[0];
     pa_level = 0;
@@ -1899,6 +1973,7 @@ void main(void)
     uart_puts("COMMAND UI; V00 mic; cmds: d/b/r/s/v/K/x\r\n");
     print_vfo();
 
+    __asm volatile("cpsie i" ::: "memory");
     uint8_t ptt_stable = 0;
     uint8_t ptt_count = 0;
     uint8_t last_key = 0xFF;
@@ -1956,6 +2031,7 @@ void main(void)
                 ptt_count = 0;
                 ptt_stable = ptt;
                 if (ptt) {
+                    backlight_activity();
                     tx_ticks = 0;
                     tx_cut = 0;
                     freq_entry = 0;
@@ -1976,7 +2052,7 @@ void main(void)
         }
 
         if (ptt_stable) {
-            if (!tx_cut && ++tx_ticks >= 600) {
+            if (!tx_cut && ++tx_ticks >= 6000) {
                 tx_cut = 1;
                 rf_rx(vfo_hz);
                 squelch_update(rf_rssi());
@@ -1991,7 +2067,7 @@ void main(void)
         if (menu_lock) {
             menu_lock--;
         }
-        delay_loops(20);
+        delay_ms(10);
 
         if (!ptt_stable && !menu_active && ++tick % 10 == 0) {
             uint16_t rssi = rf_rssi();
