@@ -1518,7 +1518,9 @@ static void menu_key(uint8_t key, bool tx)
             tnc_rx_reset();
             settings_mark_dirty();
             settings_save();
-            draw_menu_row(menu_index, true);
+            menu_active = 0;
+            menu_screen = 0;
+            draw_command(false, rf_rssi());
         } else if (menu_index == 7) {
             menu_screen = 1;
             draw_about();
@@ -2408,7 +2410,8 @@ void main(void)
 #define TONE1_1200 12389u
 #define TONE2_2200 22714u
 
-static uint8_t raw_bits[3072];
+static uint8_t raw_bits[1536];
+static volatile uint8_t afsk_bits[1536];
 static uint16_t raw_len;
 static volatile uint16_t afsk_len, afsk_pos;
 static volatile uint8_t afsk_active;
@@ -2650,7 +2653,7 @@ void systick_handler(void)
         return;
     }
     if (afsk_pos < afsk_len) {
-        uint8_t t = raw_bits[afsk_pos++];
+        uint8_t t = afsk_bits[afsk_pos++];
         rf_write_reg_fast(0x71, t ? TONE1_1200 : TONE2_2200);
     } else {
         afsk_active = 0;
@@ -2719,13 +2722,16 @@ static void afsk_send_frame(const uint8_t *frame, uint16_t n)
         if (!raw_bits[i]) {
             tone ^= 1;
         }
-        raw_bits[i] = tone;
+        afsk_bits[i] = tone;
     }
     afsk_len = raw_len;
     afsk_pos = 0;
 
+    uint8_t show_ui = !menu_active && !freq_entry;
     tnc_txing = 1;
-    draw_tx_state(true);
+    if (show_ui) {
+        draw_tx_state(true);
+    }
     rf_tx_afsk_prepare(vfo_hz);
     afsk_active = 1;
     SYST_RVR = 6666;                   /* 8 MHz / 1200 */
@@ -2739,7 +2745,9 @@ static void afsk_send_frame(const uint8_t *frame, uint16_t n)
     rf_rx(vfo_hz);
     GPIO_BSRR(GPIOC) = (1u << 14);
     tnc_txing = 0;
-    draw_tx_state(false);
+    if (show_ui) {
+        draw_tx_state(false);
+    }
 }
 
 static void ax25_addr(const char *call, uint8_t ssid, uint8_t last, uint8_t cbit)
