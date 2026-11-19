@@ -218,8 +218,8 @@ observed the other keys in that row but not `3` itself.
 
 ## Battery and PA
 
-- Battery ADC is channel 1 (PA1); calibrated around raw 596≈6.0 V and raw
-  834≈8.4 V. Low battery turns the icon red.
+- Battery ADC is channel 1 (PA1); calibrated around raw 605≈6.0 V and raw
+  845≈8.4 V. Low battery turns the icon red.
 - PA targets: LOW `0x40D7`, MID `0x48D7`, HIGH `0x64D7`; SK1 cycles them.
 - 60 s TX timeout; the carrier drops until PTT is released.
 

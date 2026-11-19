@@ -1851,14 +1851,14 @@ static uint16_t adc_sample0(void)
 static uint8_t battery_percent(uint16_t raw)
 {
     /* PA1 battery divider, calibrated for the 2S pack:
-     * ~596 raw = 6.0 V empty, ~834 raw = 8.4 V full. */
-    if (raw <= 596) {
+     * 605 raw = 6.0 V empty, 845 raw = 8.4 V full. */
+    if (raw <= 605) {
         return 0;
     }
-    if (raw >= 834) {
+    if (raw >= 845) {
         return 100;
     }
-    return (uint8_t)((raw - 596) * 100u / 238u);
+    return (uint8_t)((raw - 605) * 100u / 240u);
 }
 
 static void battery_update(void)
